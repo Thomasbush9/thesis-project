@@ -59,12 +59,14 @@ def splitPadding(pad:int)-> tuple:
         pad1 = pad //2
         pad2 = pad //2 + (pad %2)
         return (int(pad1), int(pad2))
-    
+
+# TODO: optional: add non squared patches, return padding info, add option to flat it
 def generatePatches(input:Tensor, dim:int)->Tensor:
     """given tensor (frames, h, w) and dim -> tensor (frames, (h\dim * w\dim), dim, dim) """
     
     assert len(input.shape) == 3, 'Input must be (frames, height, width)'
     n, h, w = input.shape
+    original_shape = (n, h, w)
     # pad dims if needed:
     rh = h % dim
     padh = (dim - rh) if rh !=0 else 0
@@ -82,4 +84,36 @@ def generatePatches(input:Tensor, dim:int)->Tensor:
     patches = input.unfold(2, dim, dim).unfold(3, dim, dim)  
     patches = patches.contiguous().view(n, -1, dim, dim)    
 
-    return patches
+    return patches, original_shape, (padh, padw)
+
+def reconstructFromPatches(patches: Tensor, original_shape: tuple, padding: tuple) -> Tensor:
+    """Reconstructs original images from patches tensor
+        patches: (frames, patches, dim, dim)
+        original shape : (frames, h, w)
+        padding: (ph1, ph2, pw1, pw2)
+
+        returns 
+        reconstructed: (frames, h ,w)
+    """
+    n, num_patches, ph, pw = patches.shape
+    _, h_orig, w_orig = original_shape
+    padh1, padh2, padw1, padw2 = padding
+
+    H_pad = h_orig + padh1 + padh2
+    W_pad = w_orig + padw1 + padw2
+
+
+    nh = H_pad // ph
+    nw = W_pad // pw
+
+    assert nh * nw == num_patches, "Mismatch between number of patches and target shape"
+
+    frames = patches.view(n, nh, nw, ph, pw)
+    frames = frames.permute(0, 1, 3, 2, 4).contiguous()
+    frames = frames.view(n, nh * ph, nw * pw)
+
+
+    frames = frames[:, padh1:H_pad - padh2, padw1:W_pad - padw2]
+    return frames
+
+
