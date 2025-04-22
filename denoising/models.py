@@ -1,15 +1,17 @@
+# %%
 import torch as t
 import numpy as np
 import einops
 from einops.layers.torch import Rearrange
 from torch.nn import Conv2d, ConvTranspose2d, Sequential, ReLU, BatchNorm2d, Linear
 from torch import Tensor, nn
-
+# %%
 # ==== Baseline AutoEncoder ====
 
 class AutoEncoder(nn.Module):
     def __init__(self, latent_dim_size:int, hidden_dim_size:int):
         """Creates Encoder and Decoder modules"""
+        super().__init__()
         self.latent = latent_dim_size
         self.hidden = hidden_dim_size
         self.feature_shape = None
@@ -18,10 +20,10 @@ class AutoEncoder(nn.Module):
             Conv2d(in_channels=1, out_channels=16, kernel_size=4, stride=2, padding=1),
             ReLU(),
             BatchNorm2d(num_features=16),
-            Conv2d(in_channels=16, out_channels=32),
+            Conv2d(in_channels=16, out_channels=32, kernel_size=4, stride=2, padding=1),
         )
         self.encoderfc = Sequential(
-            Linear(in_features=32, out_features=self.hidden),
+            Linear(in_features=self.feature_shape, out_features=self.hidden),
             ReLU(),
             Linear(in_features=self.hidden, out_features=self.latent)
         )
@@ -41,7 +43,9 @@ class AutoEncoder(nn.Module):
 
         xf = self.encoder_conv(x)
         self.feature_shape = xf.shape[1:] #(c, h w)
+        print(self.feature_shape)
         xf = xf.view(xf.size(0), -1)
+        print(xf.shape)
         z = self.encoderfc(xf)
 
         z_fc = self.decoder_fc(z)
@@ -51,3 +55,20 @@ class AutoEncoder(nn.Module):
         return x_prime
     
 # === Variational Autoencoder === 
+
+
+#%%
+model = AutoEncoder(latent_dim_size=5, hidden_dim_size=128)
+#%%
+# get data:
+data_path = '/Users/thomasbush/Documents/DSS_Tilburg/data/keyframes/_2025-04-22 00:25:47.432414_keyframes.pth'
+data = t.load(data_path, map_location='cpu', weights_only=False)
+idx = data['keyframe_idx']
+keyframes = data['keyframes']
+#%%
+
+keyframes = keyframes.type(t.float)
+model.forward(keyframes[0:2].unsqueeze(dim=1))
+
+
+# %%
