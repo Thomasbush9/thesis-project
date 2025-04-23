@@ -60,7 +60,7 @@ def splitPadding(pad:int)-> tuple:
         pad2 = pad //2 + (pad %2)
         return (int(pad1), int(pad2))
 
-# TODO: optional: add non squared patches, return padding info, add option to flat it
+# TODO: optional: add non squared patches,  add option to flat it
 def generatePatches(input:Tensor, dim:int)->Tensor:
     """given tensor (frames, h, w) and dim -> tensor (frames, (h\dim * w\dim), dim, dim) """
     
@@ -84,7 +84,7 @@ def generatePatches(input:Tensor, dim:int)->Tensor:
     patches = input.unfold(2, dim, dim).unfold(3, dim, dim)  
     patches = patches.contiguous().view(n, -1, dim, dim)    
 
-    return patches, original_shape, (padh, padw)
+    return patches, original_shape, (padh1, padh2, padw1, padw2)
 
 def reconstructFromPatches(patches: Tensor, original_shape: tuple, padding: tuple) -> Tensor:
     """Reconstructs original images from patches tensor

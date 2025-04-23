@@ -12,6 +12,10 @@ from models import AutoEncoder
 import torch
 import einops
 from torch.utils.data import random_split
+from torchinfo import summary
+from torchvision.utils import make_grid
+import matplotlib.pyplot as plt
+
 
 class CustomDataset(Dataset):
     def __init__(self, data:Tensor):
@@ -57,9 +61,11 @@ class AutoencoderArgs:
     trainset: Dataset
     testset: Dataset
     holdoutData: Tensor
+    original_shape:tuple
+    padding:tuple
 
-    latent_dim_size: int = 16
-    hidden_dim_size: int = 128
+    latent_dim_size: int = 64
+    hidden_dim_size: int = 256
 
     # data / training
     batch_size: int = 32
@@ -89,33 +95,47 @@ class AutoencoderTrainer:
         self.step = 0
         self.loss = nn.MSELoss()
 
-    def training_step(self, img: Tensor) -> Tensor:
+    def training_step(self, noisy:Tensor ,original: Tensor) -> Tensor:
         """
         Performs a training step on the batch of images in `img`. Returns the loss. Logs to wandb if enabled.
         """
-        pred = self.model.forward(img)
-        loss = self.loss(pred, img)
+        pred = self.model.forward(noisy)
+        loss = self.loss(pred, original)
         loss.backward()
         self.optimizer.step()
         self.optimizer.zero_grad()
-        self.step += img.shape[0]
+        self.step += original.shape[0]
 
         if self.args.use_wandb:
           wandb.log(dict(loss=loss), step=self.step)
+        
 
         return loss
-
+# TODO: implement log samples 
     @t.inference_mode()
     def log_samples(self) -> None:
-        """
-        Evaluates model on holdout data, either logging to weights & biases or displaying output.
-        """
-        assert self.step > 0, "First call should come after a training step. Remember to increment `self.step`."
-        output = self.model(self.HOLDOUT_DATA.to(self.device).float())
-        # if self.args.use_wandb:
-        #     wandb.log({"images": [wandb.Image(arr) for arr in output.cpu().numpy()]}, step=self.step)
-        # else:
-        #     display_data(t.concat([HOLDOUT_DATA, output]), nrows=2, title="AE reconstructions")
+        assert self.step > 0, "Call after training step."
+
+        self.model.eval()
+        output_patches = self.model(self.HOLDOUT_DATA.to(self.device)).cpu()
+        original_patches = self.HOLDOUT_DATA.cpu()
+
+        original_patches = original_patches.squeeze(1).unsqueeze(0)
+        output_patches = output_patches.squeeze(1).unsqueeze(0)
+
+        # Reconstruct full images
+        reconstructed_img = reconstructFromPatches(output_patches, self.args.original_shape, self.args.padding)
+        original_img = reconstructFromPatches(original_patches, self.args.original_shape, self.args.padding)
+
+        # Combine vertically
+        comparison = torch.cat([original_img, reconstructed_img], dim=1)  # shape: (1, H*2, W)
+
+        # Make into grid image and send to WandB
+        img_grid = make_grid(comparison, normalize=True, scale_each=True)
+        if self.args.use_wandb:
+            wandb.log({"reconstruction": wandb.Image(img_grid)}, step=self.step)
+        else:
+            plt.imshow(make_grid(img_grid).permute(1, 2, 0))  
 
     def train(self) -> AutoEncoder:
         """Performs a full training run."""
@@ -130,7 +150,9 @@ class AutoencoderTrainer:
 
             for imgs in progress_bar:
                 imgs = imgs.to(self.device)
-                loss = self.training_step(imgs)
+                noisy = imgs + 0.1 * torch.randn_like(imgs)
+                noisy = noisy.clamp(0, 1)
+                loss = self.training_step(noisy,imgs)
                 progress_bar.set_description(f"{epoch=:02d}, {loss=:.4f}, step={self.step:05d}")
                 # log every 250 steps
                 if self.step % self.args.log_every_n_steps == 0:
@@ -152,14 +174,20 @@ if __name__ == '__main__':
 
     data = torch.load(data_path, map_location='cpu', weights_only=False)
     keyframes = data['keyframes']
+    keyframes = keyframes / 255.0  # shape: (frames, H, W)
     idx = data['keyframe_idx']
 
     train_dataset, test_dataset, orig_shape, padding = buildDatasetFromTensor(keyframes, dim=64)
-    args_trainer = AutoencoderArgs(trainset=train_dataset, testset=test_dataset, holdoutData=getHoldoutData(test_dataset))
+    print(padding)
+    args_trainer = AutoencoderArgs(trainset=train_dataset, testset=test_dataset, holdoutData=getHoldoutData(test_dataset), original_shape=orig_shape, padding=padding,
+                                   use_wandb=True)
 
 # === Start Trainign ===
     trainer = AutoencoderTrainer(args_trainer, device='mps')
     autoencoder = trainer.train()
+    summary(autoencoder, (len(train_dataset),1, 64, 64), device='mps')
+
+
 
 
 
