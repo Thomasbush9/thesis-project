@@ -4,6 +4,18 @@
 
 Our goals it to denoise frames before running postural tracking in order to reduce noise. This step is beneficial to the overall pipeline as it reduces the number of errors during the prediction stage. 
 
+## Data Description:
+
+To train our models throuh the denoing step, we have decided to start from the keyframe extracted. The dataset of key frames is composed of 500 key frames per video variable shape depending on the video view (left, right:220x624, top, bottom: 220x608 or central:608x624). 
+
+To ensure consistency across different model's architectures we have decided to convert key-frames into patches of the same size. Patches were formed in the following way: given a Tensor of frames of shape (frames, h, w) a patch size is selected (e.g., 64). Following to ensure that the input tensor is divisble by the patch we add padding to each dimension using the module operator (pad = dim - (h%dim) if ! 0 else 0), the padding is applied symmetrically to the image. 
+
+Once the number of patches of each dimension is determined, we have the final shape: frames, number of patches, dim, dim which will rearranged in: (frames*number of patches), dim, dim.
+
+The input tensor is normalised to contain values only between 0 and 1. 
+
+In this way we have for a video of the lateral view the following input tensor: 20k, 64, 64
+
 
 ## Architectures Considered:
 
@@ -13,23 +25,36 @@ The natural choice to denoise data are autoencoders. Thise models takes an input
 
 We consider different kinds of autoencoders:
 
-1. Denoising autoencoder: we apply some noise to the input 
+1. Denoising autoencoder: 
 
-2. Sparse autoencoder
+The model has been built using the PyTorch library, it has two hyperparameters the hidden channel dimension and the latent space size, they determined the size of the latent space of the autoencder. 
+
+The autoenconder has two main modules: an encoder, that has to transform the input image into a datapoint in the latent space; and the decoder, that starts from a point in the latent space and it has to reconstruct the input from that. 
+
+The encoder contains: two convolutional blocks (each of them formed by a 2d convolution, ReLU as activation function and the first one has a Batch normalzation module), then the input is flattent and passed to two linear blocks (Linear layer, the first one has ReLU as activation function) that will map the input into the latent space.  
+
+The decoder on the other hand has the opposite architecture of the encoder. It starts with two linear layers, then the input is mapped into image shape to be passed to two transposed convolutions blocks that will produce a final image of the same shape of the orignal input. 
+
+During the forward pass we pass an input image to the encoder that produces a point in the latent space which is passed to the decoder which will produce an output image. 
+
+2. Sparse autoencoder: 
 
 3. Variational Autoencder 
 
 4. UNet: encoder-decoder with skip connections 
 
-### Temporal Smoothing?
+## Training Regime:
 
-We use the past and future frames to clean the current one 
+ The input tensor consists of grayscale video frames shaped as (frames, height, width), which are first normalized to the [0, 1] range by dividing by 255. These frames are then split into non-overlapping patches of size dim x dim (e.g. 64x64) using a custom patching function. The resulting dataset consists of all extracted patches reshaped into the format (total_patches, 1, dim, dim), which is then split into training and testing sets with a configurable ratio (default 80/20).
 
+The model is a standard convolutional autoencoder consisting of an encoder and decoder. The encoder applies two 2D convolutional layers followed by ReLU activations and batch normalization, then flattens the output and passes it through two linear layers to produce a latent representation of size latent_dim_size. The decoder mirrors this structure: it starts from the latent space, passes through linear layers, reshapes the tensor to the original conv shape, and reconstructs the image with transposed convolution layers.
 
-### Attention Based autoencoders?
+Training is performed using the Adam optimizer with configurable learning rate and beta values. The loss function is MSELoss, which computes the mean squared error between the reconstructed and original normalized patches. The model is trained on an MPS device (Apple GPU), and batches are loaded with a configurable batch size (default 32).
+
+To monitor model performance during training, a holdout set of patches corresponding to one full frame is reserved. These are passed through the model at regular intervals (log_every_n_steps), and the reconstructed patches are assembled back into a full frame using the inverse of the patching process. Both the original and reconstructed images are saved or logged (optionally via Weights & Biases) for qualitative inspection.
 
 ## Metrics:
 
-1. MSE
+1. MSE V
 2. SSIM: structure similarity 
 3. Impact over keypoint tracking (reprojection error?)
