@@ -27,7 +27,15 @@ class CustomDataset(Dataset):
     def __getitem__(self, idx):
         img = self.frames[idx]  
         return img
-
+    
+def addPoissoinGaussiaNoise(img: torch.Tensor, sigma_s=0.01, sigma_c=0.005):
+    """
+    Adds heteroscedastic noise: variance depends on pixel intensity.
+    Input and output should be in [0, 1] range.
+    """
+    variance = img * sigma_s**2 + sigma_c**2
+    noise = torch.randn_like(img) * torch.sqrt(variance)
+    return (img + noise).clamp(0, 1)
 
 def buildDatasetFromTensor(input:Tensor, dim:int, train_ratio:float=.8)->tuple:
 
@@ -64,8 +72,8 @@ class AutoencoderArgs:
     original_shape:tuple
     padding:tuple
 
-    latent_dim_size: int = 64
-    hidden_dim_size: int = 256
+    latent_dim_size: int = 20
+    hidden_dim_size: int = 128
 
     # data / training
     batch_size: int = 32
@@ -150,8 +158,10 @@ class AutoencoderTrainer:
 
             for imgs in progress_bar:
                 imgs = imgs.to(self.device)
-                noisy = imgs + 0.1 * torch.randn_like(imgs)
-                noisy = noisy.clamp(0, 1)
+                # noisy = imgs + 0.1 * torch.randn_like(imgs)
+                # noisy = noisy.clamp(0, 1)
+                # noisy = addPoissoinGaussiaNoise(imgs)
+                noisy = addPoissoinGaussiaNoise(imgs, sigma_s=0.1, sigma_c=0.05)
                 loss = self.training_step(noisy,imgs)
                 progress_bar.set_description(f"{epoch=:02d}, {loss=:.4f}, step={self.step:05d}")
                 # log every 250 steps
@@ -178,14 +188,14 @@ if __name__ == '__main__':
     idx = data['keyframe_idx']
 
     train_dataset, test_dataset, orig_shape, padding = buildDatasetFromTensor(keyframes, dim=64)
-    print(padding)
-    args_trainer = AutoencoderArgs(trainset=train_dataset, testset=test_dataset, holdoutData=getHoldoutData(test_dataset), original_shape=orig_shape, padding=padding,
-                                   use_wandb=True)
+
+    args_trainer = AutoencoderArgs(trainset=train_dataset, testset=test_dataset, holdoutData=getHoldoutData(test_dataset), original_shape=orig_shape, padding=padding)
 
 # === Start Trainign ===
     trainer = AutoencoderTrainer(args_trainer, device='mps')
     autoencoder = trainer.train()
-    summary(autoencoder, (len(train_dataset),1, 64, 64), device='mps')
+    # summary(autoencoder, (len(train_dataset),1, 64, 64), device='mps')
+
 
 
 
