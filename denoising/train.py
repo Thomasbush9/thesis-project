@@ -15,8 +15,9 @@ from torch.utils.data import random_split
 from torchinfo import summary
 from torchvision.utils import make_grid
 import matplotlib.pyplot as plt
+from piqa import SSIM
 
-
+# ==== classes data and loss ===
 class CustomDataset(Dataset):
     def __init__(self, data:Tensor):
         self.frames = data
@@ -27,7 +28,15 @@ class CustomDataset(Dataset):
     def __getitem__(self, idx):
         img = self.frames[idx]  
         return img
+
+# new loss function 
+class SSIMLoss(SSIM):
+    def __init__(self, window_size: int = 11, sigma: float = 1.5, n_channels: int = 1, reduction: str = 'mean', **kwargs):
+        super().__init__(window_size, sigma, n_channels, reduction, **kwargs)
+    def forward(self, x, y):
+        return 1. - super().forward(x, y)
     
+# === noise creation ===
 def addPoissoinGaussiaNoise(img: torch.Tensor, sigma_s=0.01, sigma_c=0.005):
     """
     Adds heteroscedastic noise: variance depends on pixel intensity.
@@ -36,6 +45,30 @@ def addPoissoinGaussiaNoise(img: torch.Tensor, sigma_s=0.01, sigma_c=0.005):
     variance = img * sigma_s**2 + sigma_c**2
     noise = torch.randn_like(img) * torch.sqrt(variance)
     return (img + noise).clamp(0, 1)
+
+def applyInverseCrf(img: torch.Tensor, gamma: float = 2.2) -> torch.Tensor:
+    return img ** gamma
+
+def addRealisticNoise(img: torch.Tensor, sigma_s=0.12, sigma_c=0.03) -> torch.Tensor:
+    """
+    Realistic noise: L + n_s + n_c
+    img: (B, C, H, W), float32 in [0,1]
+    """
+    # Inverse CRF (simulate raw sensor signal)
+    linear_img = applyInverseCrf(img)
+
+    # Signal-dependent noise (shot noise)
+    noise_s = torch.randn_like(linear_img) * torch.sqrt(torch.clamp(linear_img * sigma_s**2, min=1e-6))
+
+    # Constant noise (read noise)
+    noise_c = torch.randn_like(linear_img) * sigma_c
+
+    noisy_img = linear_img + noise_s + noise_c
+    noisy_img = torch.clamp(noisy_img, 0, 1)
+
+    # Forward CRF to get final noisy image
+    return noisy_img ** (1 / 2.2)  # CRF simulation
+
 
 def buildDatasetFromTensor(input:Tensor, dim:int, train_ratio:float=.8)->tuple:
 
@@ -101,25 +134,30 @@ class AutoencoderTrainer:
         ).to(self.device)
         self.optimizer = t.optim.Adam(self.model.parameters(), lr=args.lr, betas=args.betas)
         self.step = 0
-        self.loss = nn.MSELoss()
+        self.loss_mse = nn.MSELoss()
+        self.loss_ssim = SSIMLoss().to(self.device)
 
     def training_step(self, noisy:Tensor ,original: Tensor) -> Tensor:
         """
         Performs a training step on the batch of images in `img`. Returns the loss. Logs to wandb if enabled.
         """
         pred = self.model.forward(noisy)
-        loss = self.loss(pred, original)
+        pred1 = torch.clamp(pred, 0.0, 1.0)
+        loss_ssim = self.loss_ssim(pred1, original)
+        loss_mse = self.loss_mse(pred, original)
+        loss = loss_mse + loss_ssim
         loss.backward()
         self.optimizer.step()
         self.optimizer.zero_grad()
         self.step += original.shape[0]
 
         if self.args.use_wandb:
-          wandb.log(dict(loss=loss), step=self.step)
+          wandb.log(dict(loss=loss,
+                         SSIM=loss_ssim, MSE=loss_mse), step=self.step)
         
 
-        return loss
-# TODO: implement log samples 
+        return loss, loss_ssim, loss_mse
+# TODO: make patches in right order
     @t.inference_mode()
     def log_samples(self) -> None:
         assert self.step > 0, "Call after training step."
@@ -161,9 +199,9 @@ class AutoencoderTrainer:
                 # noisy = imgs + 0.1 * torch.randn_like(imgs)
                 # noisy = noisy.clamp(0, 1)
                 # noisy = addPoissoinGaussiaNoise(imgs)
-                noisy = addPoissoinGaussiaNoise(imgs, sigma_s=0.1, sigma_c=0.05)
-                loss = self.training_step(noisy,imgs)
-                progress_bar.set_description(f"{epoch=:02d}, {loss=:.4f}, step={self.step:05d}")
+                noisy = addRealisticNoise(imgs, sigma_s=0.1, sigma_c=0.05)
+                loss, loss_ssim, loss_mse = self.training_step(noisy,imgs)
+                progress_bar.set_description(f"{epoch=:02d}, {loss=:.4f}, MSE:{loss_mse:.4f}, SSIM:{loss_ssim:.4f} step={self.step:05d}")
                 # log every 250 steps
                 if self.step % self.args.log_every_n_steps == 0:
                   self.log_samples()
@@ -189,7 +227,7 @@ if __name__ == '__main__':
 
     train_dataset, test_dataset, orig_shape, padding = buildDatasetFromTensor(keyframes, dim=64)
 
-    args_trainer = AutoencoderArgs(trainset=train_dataset, testset=test_dataset, holdoutData=getHoldoutData(test_dataset), original_shape=orig_shape, padding=padding)
+    args_trainer = AutoencoderArgs(trainset=train_dataset, testset=test_dataset, holdoutData=getHoldoutData(test_dataset), original_shape=orig_shape, padding=padding, use_wandb=True)
 
 # === Start Trainign ===
     trainer = AutoencoderTrainer(args_trainer, device='mps')
@@ -202,3 +240,4 @@ if __name__ == '__main__':
 
 
     
+ 
