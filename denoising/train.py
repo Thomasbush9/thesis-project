@@ -8,7 +8,7 @@ from torch import Tensor
 import numpy as np
 import argparse
 import torch.nn as nn
-from models import AutoEncoder
+from models import AutoEncoder, CBDNet
 import torch
 import einops
 from torch.utils.data import random_split
@@ -16,6 +16,7 @@ from torchinfo import summary
 from torchvision.utils import make_grid
 import matplotlib.pyplot as plt
 from piqa import SSIM
+from typing import Literal
 
 # ==== classes data and loss ===
 class CustomDataset(Dataset):
@@ -35,6 +36,26 @@ class SSIMLoss(SSIM):
         super().__init__(window_size, sigma, n_channels, reduction, **kwargs)
     def forward(self, x, y):
         return 1. - super().forward(x, y)
+    
+class AsymmetricLoss(nn.Module):
+    def __init__(self, alpha: float = 0.3):
+        """
+        Implements the asymmetric loss from CBDNet.
+        Penalizes underestimation more than overestimation.
+        """
+        super().__init__()
+        self.alpha = alpha
+
+    def forward(self, pred: Tensor, target: Tensor) -> Tensor:
+        """
+        pred: predicted noise map (B, C, H, W)
+        target: ground-truth noise map (B, C, H, W)
+        """
+        diff = pred - target
+        mask = (diff < 0).float()  
+        weights = self.alpha * (1 - mask) + (1 - self.alpha) * mask
+        loss = weights * (diff ** 2)
+        return loss.mean()
     
 # === noise creation ===
 def addPoissoinGaussiaNoise(img: torch.Tensor, sigma_s=0.01, sigma_c=0.005):
@@ -94,9 +115,9 @@ def getHoldoutData(testset:Dataset, num_data:int=40)->Tensor:
 
     assert len(testset) % num_data==0, f'{num_data} makes a whole img'
     # extract imgs
-    imgs = next(iter(DataLoader(test_dataset, batch_size=num_data, shuffle=False)))
+    imgs = next(iter(DataLoader(testset, batch_size=num_data, shuffle=False)))
     return imgs 
-
+# === AutoEncoder Trainer ===
 @dataclass
 class AutoencoderArgs:
     trainset: Dataset
@@ -122,7 +143,7 @@ class AutoencoderArgs:
 
 
 class AutoencoderTrainer:
-    def __init__(self, args: AutoencoderArgs, device:str):
+    def __init__(self, args: AutoencoderArgs, device:Literal['cpu', 'mps']):
         self.args = args
         self.device = device
         self.trainset = args.trainset
@@ -210,11 +231,118 @@ class AutoencoderTrainer:
             wandb.finish()
 
         return self.model
+# ==== CBDNet Trainer ===
+
+@dataclass
+class CBDNetArgs:
+    trainset: Dataset
+    testset: Dataset
+    holdoutData: Tensor
+    original_shape:tuple
+    padding:tuple
+
+    # data / training
+    batch_size: int = 32
+    epochs: int = 5
+    lr: float = 1e-3
+    betas: tuple[float, float] = (0.5, 0.999)
+
+    # logging
+    use_wandb: bool = False
+    wandb_project: str | None = "thesis_dss_autoencoder"
+    wandb_name: str | None = None
+    log_every_n_steps: int = 250
+
+class CBDNetTrainer():
+    def __init__(self, args:CBDNetArgs, device:Literal['cpu', 'mps']) -> None:
+        
+        self.args = args
+        self.device = device
+        self.trainset = args.trainset
+        self.HOLDOUT_DATA = args.holdoutData
+        self.trainloader = DataLoader(self.trainset, batch_size=self.args.batch_size, shuffle=True)
+        #define losses, optim, model:
+        self.model = CBDNet().to(self.device)
+        self.asym_loss = AsymmetricLoss()
+        self.loss_rec = nn.MSELoss()
+        self.optimizer = t.optim.Adam(self.model.parameters(), lr=self.args.lr, betas=self.args.betas)
+
+    def training_step(self, imgs:Tensor, noisy_imgs:Tensor):
+        '''Perform a single training step'''
+        self.model.train()
+        real_sigma = t.abs(imgs - noisy_imgs)
+        pred_img, pred_sigma = self.model.forward(noisy_imgs)
+        loss_ne = self.asym_loss(real_sigma, pred_sigma)
+        loss_mse = self.loss_rec(imgs, pred_img)
+        loss = loss_mse+  0.5 * loss_ne
+        loss.backward()
+        self.optimizer.step()
+        self.optimizer.zero_grad()
+        self.step += imgs.shape[0]
+
+        if self.args.use_wandb:
+          wandb.log(dict(loss=loss,
+                         AsymLoss=loss_ne, MSE=loss_mse), step=self.step)
+        
+        return loss, loss_ne, loss_mse
+
+    @t.inference_mode()
+    def log_samples(self) -> None:
+        assert self.step > 0, "Call after training step."
+
+        self.model.eval()
+        output_patches, _ = self.model(self.HOLDOUT_DATA.to(self.device))
+        output_patches = output_patches.cpu()
+        original_patches = self.HOLDOUT_DATA.cpu()
+
+        original_patches = original_patches.squeeze(1).unsqueeze(0)
+        output_patches = output_patches.squeeze(1).unsqueeze(0)
+
+        # Reconstruct full images
+        reconstructed_img = reconstructFromPatches(output_patches, self.args.original_shape, self.args.padding)
+        original_img = reconstructFromPatches(original_patches, self.args.original_shape, self.args.padding)
+
+        # Combine vertically
+        comparison = torch.cat([original_img, reconstructed_img], dim=1)  # shape: (1, H*2, W)
+
+        # Make into grid image and send to WandB
+        img_grid = make_grid(comparison, normalize=True, scale_each=True)
+        if self.args.use_wandb:
+            wandb.log({"reconstruction": wandb.Image(img_grid)}, step=self.step)
+
+    
+    def train(self)->CBDNet:
+        """Performs a full training run."""
+        self.step = 0
+        if self.args.use_wandb:
+            wandb.init(project=self.args.wandb_project, name=self.args.wandb_name)
+            wandb.watch(self.model)
+
+        for epoch in range(self.args.epochs):
+
+            progress_bar = tqdm(self.trainloader, total=int(len(self.trainloader)), ascii=True)
+
+            for imgs in progress_bar:
+                imgs = imgs.to(self.device)
+                noisy = addRealisticNoise(imgs, sigma_s=0.1, sigma_c=0.05)
+                loss, loss_ne, loss_mse = self.training_step(noisy,imgs)
+                progress_bar.set_description(f"{epoch=:02d}, {loss=:.4f}, MSE:{loss_mse:.4f}, NE:{loss_ne:.4f} step={self.step:05d}")
+                # log every 250 steps
+                if self.step % self.args.log_every_n_steps == 0:
+                  self.log_samples()
+
+        if self.args.use_wandb:
+            wandb.finish()
+
+        return self.model
+
 
 if __name__ == '__main__':
 
     parser = argparse.ArgumentParser(prog="Denoising training")
     parser.add_argument("--data_path", type=str)
+    parser.add_argument("--m", type=str, choices=["CBDN", "AE"])
+
 
 
     args = parser.parse_args()
@@ -227,10 +355,11 @@ if __name__ == '__main__':
 
     train_dataset, test_dataset, orig_shape, padding = buildDatasetFromTensor(keyframes, dim=64)
 
-    args_trainer = AutoencoderArgs(trainset=train_dataset, testset=test_dataset, holdoutData=getHoldoutData(test_dataset), original_shape=orig_shape, padding=padding, use_wandb=True)
+    args_trainer = AutoencoderArgs(trainset=train_dataset, testset=test_dataset, holdoutData=getHoldoutData(test_dataset), original_shape=orig_shape, padding=padding,
+                                    use_wandb=False) 
 
 # === Start Trainign ===
-    trainer = AutoencoderTrainer(args_trainer, device='mps')
+    trainer = AutoencoderTrainer(args_trainer, device='mps') if args.m == "AE" else CBDNetTrainer(args_trainer, device='mps')
     autoencoder = trainer.train()
     # summary(autoencoder, (len(train_dataset),1, 64, 64), device='mps')
 

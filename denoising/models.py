@@ -139,7 +139,6 @@ class CBDNet(nn.Module):
             acts.append(out)
         out = self.up1(out)
         # first skip connection
-        print(out.shape, [act.shape for act in acts])
         skip_con1 = t.cat([out, acts[-2]], dim=1)
         out = self.conv_up1(skip_con1)
 
