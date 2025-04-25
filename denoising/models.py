@@ -1,9 +1,11 @@
+
 import torch as t
 import numpy as np
 import einops
 from einops.layers.torch import Rearrange
-from torch.nn import Conv2d, ConvTranspose2d, Sequential, ReLU, BatchNorm2d, Linear
+from torch.nn import Conv2d, ConvTranspose2d, Sequential, ReLU, BatchNorm2d, Linear, Sigmoid
 from torch import Tensor, nn
+from utils import generatePatches
 
 #TODO: review and see if you have to init the weights 
 # ==== Baseline AutoEncoder ====
@@ -71,6 +73,7 @@ class CBDNet(nn.Module):
             ReLU(),
         )
         # === Denoiser Network ===
+        # === 1downsampling ===
         self.cnet_conv1 = Sequential(
             Conv2d(in_channels=2, out_channels=64, kernel_size=3, padding=1, stride=1),
             ReLU(),
@@ -100,29 +103,27 @@ class CBDNet(nn.Module):
             Conv2d(in_channels=256, out_channels=256, kernel_size=3, padding=1, stride=1),
             ReLU(),
         )
-
-        self.cnent_transposed1 = Sequential(
-            ConvTranspose2d(in_channels=256, out_channels=128, kernel_size=3, stride=2, padding=1),
-            ReLU(),
-            Conv2d(in_channels=128, out_channels=128, kernel_size=3, padding=1, stride=1),
-            ReLU(),
-            Conv2d(in_channels=128, out_channels=128, kernel_size=3, padding=1, stride=1),
-            ReLU(),
-            Conv2d(in_channels=128, out_channels=128, kernel_size=3, padding=1, stride=1),
-            ReLU(),
-
-        )
-        self.cnent_transposed2 = Sequential(
-            ConvTranspose2d(in_channels=128, out_channels=64, kernel_size=3, stride=2, padding=1),
-            ReLU(),
-            Conv2d(in_channels=64, out_channels=64, kernel_size=3, padding=1, stride=1),
-            ReLU(),
-            Conv2d(in_channels=64, out_channels=64, kernel_size=3, padding=1, stride=1),
-            ReLU(),
-        )
         self.encoder = Sequential(self.cnet_conv1, self.cnet_conv2, self.cnet_conv3)
-        self.decoder = Sequential(self.cnent_transposed1, self.cnent_transposed2)
 
+        # === 2upsampling ===
+        self.up1 = ConvTranspose2d(in_channels=256, out_channels=128, kernel_size=3, stride=2, padding=1, output_padding=1)
+        self.conv_up1 = Sequential(
+            Conv2d(in_channels=256, out_channels=128, kernel_size=3, padding=1, stride=1),
+            ReLU(),
+            Conv2d(in_channels=128, out_channels=128, kernel_size=3, padding=1, stride=1),
+            ReLU(),
+            Conv2d(in_channels=128, out_channels=128, kernel_size=3, padding=1, stride=1),
+            ReLU(),
+        )
+        self.up2 = ConvTranspose2d(in_channels=128, out_channels=64, kernel_size=3, stride=2, padding=1, output_padding=1)
+        self.conv_up2 = Sequential(
+            Conv2d(in_channels=128, out_channels=64, kernel_size=3, padding=1, stride=1),
+            ReLU(),
+            Conv2d(in_channels=64, out_channels=1, kernel_size=3, padding=1, stride=1),
+            Sigmoid()
+
+        )
+        
     def forward(self, x:Tensor) -> Tensor:
         """
         Perform forward pass with skip connections, returns:
@@ -132,28 +133,23 @@ class CBDNet(nn.Module):
         noise_map = self.noise_estimator(x)
         out = t.cat([x, noise_map], dim=1)  
         acts = []
-        # store activations for skipping connections 
-        acts.append(x)
+        # # store activations for skipping connections 
         for layer in self.encoder:
             out = layer(out)
             acts.append(out)
-        for a, layer in zip(acts[::-1], self.decoder):
-            out = layer(t.cat([out, a], dim=1))
-        return out, noise_map
-        
+        out = self.up1(out)
+        # first skip connection
+        print(out.shape, [act.shape for act in acts])
+        skip_con1 = t.cat([out, acts[-2]], dim=1)
+        out = self.conv_up1(skip_con1)
+
+        out = self.up2(out)
+
+        # second skip connection 
+        skip_con2 = t.cat([out, acts[-3]], dim=1)
+        out = self.conv_up2(skip_con2)
+
+        return x + out, noise_map
 
         
 
-
-# def forward(self, x):
-#     out = x
-#     acts = []
-#     for layer in self.encoder:
-#         out = layer(out)
-#         acts.append(out)
-
-#     for a, layer in zip(acts[::-1], self.decoder):
-#         out = layer(out, a)
-
-#     return out
-# === Residual Network === 
