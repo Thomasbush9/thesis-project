@@ -8,12 +8,18 @@ from torch import Tensor, nn
 from utils import generatePatches
 
 #TODO: review and see if you have to init the weights 
+def weights_init(m):
+    if isinstance(m, nn.Conv2d) or isinstance(m, nn.ConvTranspose2d):
+        nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+        if m.bias is not None:
+            nn.init.zeros_(m.bias)
 # ==== Baseline AutoEncoder ====
 # img = 1, 64, 64
 class AutoEncoder(nn.Module):
     def __init__(self, latent_dim_size:int, hidden_dim_size:int):
         """Creates Encoder and Decoder modules"""
         super().__init__()
+        self.apply(weights_init)
         self.latent = latent_dim_size
         self.hidden = hidden_dim_size
         c2l = Rearrange('b c h w -> b (c h w)')
@@ -57,18 +63,23 @@ class AutoEncoder(nn.Module):
 class CBDNet(nn.Module):
     def __init__(self, *args, **kwargs) -> None:
         super().__init__()
+        self.apply(weights_init)
 
 
 # ==== Noise estimator network ====
         self.noise_estimator = Sequential(
             Conv2d(in_channels=1, out_channels=32, kernel_size=3, padding=1, stride=1),
             ReLU(),
+            BatchNorm2d(num_features=32),
             Conv2d(in_channels=32, out_channels=32, kernel_size=3, padding=1, stride=1),
             ReLU(),
+            BatchNorm2d(num_features=32),
             Conv2d(in_channels=32, out_channels=32, kernel_size=3, padding=1, stride=1),
             ReLU(),
+            BatchNorm2d(num_features=32),
             Conv2d(in_channels=32, out_channels=32, kernel_size=3, padding=1, stride=1),
             ReLU(),
+            BatchNorm2d(num_features=32),
             Conv2d(in_channels=32, out_channels=1, kernel_size=3, padding=1, stride=1),
             ReLU(),
         )

@@ -131,13 +131,13 @@ class AutoencoderArgs:
 
     # data / training
     batch_size: int = 32
-    epochs: int = 10
+    epochs: int = 5
     lr: float = 1e-3
     betas: tuple[float, float] = (0.5, 0.999)
 
     # logging
     use_wandb: bool = False
-    wandb_project: str | None = "thesis_dss_autoencoder"
+    wandb_project: str | None = "thesis_dss_CBDNet"
     wandb_name: str | None = None
     log_every_n_steps: int = 250
 
@@ -266,15 +266,15 @@ class CBDNetTrainer():
         self.asym_loss = AsymmetricLoss()
         self.loss_rec = nn.MSELoss()
         self.optimizer = t.optim.Adam(self.model.parameters(), lr=self.args.lr, betas=self.args.betas)
-
+    
     def training_step(self, imgs:Tensor, noisy_imgs:Tensor):
         '''Perform a single training step'''
         self.model.train()
         real_sigma = t.abs(imgs - noisy_imgs)
         pred_img, pred_sigma = self.model.forward(noisy_imgs)
-        loss_ne = self.asym_loss(real_sigma, pred_sigma)
+        loss_ne = self.asym_loss(pred_sigma, real_sigma)
         loss_mse = self.loss_rec(imgs, pred_img)
-        loss = loss_mse+  0.5 * loss_ne
+        loss = .7 *loss_mse+  1.5 * loss_ne
         loss.backward()
         self.optimizer.step()
         self.optimizer.zero_grad()
@@ -291,7 +291,7 @@ class CBDNetTrainer():
         assert self.step > 0, "Call after training step."
 
         self.model.eval()
-        output_patches, _ = self.model(self.HOLDOUT_DATA.to(self.device))
+        output_patches = self.model(self.HOLDOUT_DATA.to(self.device))[0].detach().cpu()
         output_patches = output_patches.cpu()
         original_patches = self.HOLDOUT_DATA.cpu()
 
@@ -324,8 +324,8 @@ class CBDNetTrainer():
 
             for imgs in progress_bar:
                 imgs = imgs.to(self.device)
-                noisy = addRealisticNoise(imgs, sigma_s=0.1, sigma_c=0.05)
-                loss, loss_ne, loss_mse = self.training_step(noisy,imgs)
+                noisy = addRealisticNoise(imgs, sigma_s=0.15, sigma_c=0.07)
+                loss, loss_ne, loss_mse = self.training_step(imgs, noisy)
                 progress_bar.set_description(f"{epoch=:02d}, {loss=:.4f}, MSE:{loss_mse:.4f}, NE:{loss_ne:.4f} step={self.step:05d}")
                 # log every 250 steps
                 if self.step % self.args.log_every_n_steps == 0:
