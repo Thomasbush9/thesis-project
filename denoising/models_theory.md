@@ -43,6 +43,18 @@ During the forward pass we pass an input image to the encoder that produces a po
 
 4. UNet: encoder-decoder with skip connections 
 
+The model consists of two main componetns:
+
+- Noise estimator Network: simple 5 fully convolutional layers=> it servers to generate a map of the noise in the img
+- UNet: series of convolutions downsampling and upsampling with skip connections (input is img + noise estimation)
+
+
+
+
+
+
+
+
 ## Training Regime:
 
  The input tensor consists of grayscale video frames shaped as (frames, height, width), which are first normalized to the [0, 1] range by dividing by 255. These frames are then split into non-overlapping patches of size dim x dim (e.g. 64x64) using a custom patching function. The resulting dataset consists of all extracted patches reshaped into the format (total_patches, 1, dim, dim), which is then split into training and testing sets with a configurable ratio (default 80/20).
