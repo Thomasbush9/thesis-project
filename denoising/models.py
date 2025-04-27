@@ -3,13 +3,13 @@ import torch as t
 import numpy as np
 import einops
 from einops.layers.torch import Rearrange
-from torch.nn import Conv2d, ConvTranspose2d, Sequential, ReLU, BatchNorm2d, Linear, Sigmoid
+from torch.nn import Conv2d, ConvTranspose2d, Sequential, ReLU, BatchNorm2d, Linear, Sigmoid, AvgPool2d
 from torch import Tensor, nn
 from utils import generatePatches
 
 #TODO: review and see if you have to init the weights 
 def weights_init(m):
-    if isinstance(m, nn.Conv2d) or isinstance(m, nn.ConvTranspose2d):
+    if isinstance(m, Conv2d) or isinstance(m, nn.ConvTranspose2d):
         nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
         if m.bias is not None:
             nn.init.zeros_(m.bias)
@@ -58,108 +58,105 @@ class AutoEncoder(nn.Module):
 
 # === VAE or UNET ===
 
-
+#TODO: optimize network 
 # ==== CBDNet — Convolutional Blind Denoising Network ===
 class CBDNet(nn.Module):
-    def __init__(self, *args, **kwargs) -> None:
+    def __init__(self):
         super().__init__()
-        self.apply(weights_init)
 
+        # ==== Noise Estimator ====
+        self.noise_estimator = nn.Sequential(
+            Conv2d(1, 32, kernel_size=3, padding=1),
+            ReLU(),
+            Conv2d(32, 32, kernel_size=3, padding=1),
+            ReLU(),
+            Conv2d(32, 32, kernel_size=3, padding=1),
+            ReLU(),
+            Conv2d(32, 32, kernel_size=3, padding=1),
+            ReLU(),
+            Conv2d(32, 1, kernel_size=3, padding=1),
+            ReLU()
+        )
 
-# ==== Noise estimator network ====
-        self.noise_estimator = Sequential(
-            Conv2d(in_channels=1, out_channels=32, kernel_size=3, padding=1, stride=1),
+        # === Encoder ===
+        self.conv1 = nn.Sequential(
+            Conv2d(2, 64, kernel_size=3, padding=1),
             ReLU(),
-            BatchNorm2d(num_features=32),
-            Conv2d(in_channels=32, out_channels=32, kernel_size=3, padding=1, stride=1),
-            ReLU(),
-            BatchNorm2d(num_features=32),
-            Conv2d(in_channels=32, out_channels=32, kernel_size=3, padding=1, stride=1),
-            ReLU(),
-            BatchNorm2d(num_features=32),
-            Conv2d(in_channels=32, out_channels=32, kernel_size=3, padding=1, stride=1),
-            ReLU(),
-            BatchNorm2d(num_features=32),
-            Conv2d(in_channels=32, out_channels=1, kernel_size=3, padding=1, stride=1),
+            Conv2d(64, 64, kernel_size=3, padding=1),
             ReLU(),
         )
-        # === Denoiser Network ===
-        # === 1downsampling ===
-        self.cnet_conv1 = Sequential(
-            Conv2d(in_channels=2, out_channels=64, kernel_size=3, padding=1, stride=1),
-            ReLU(),
-            Conv2d(in_channels=64, out_channels=64, kernel_size=3, padding=1, stride=1),
-            ReLU(),
-            Conv2d(in_channels=64, out_channels=64, kernel_size=3, padding=1, stride=1),
-            ReLU(),
-        )
-        self.cnet_conv2 = Sequential(
-            Conv2d(in_channels=64, out_channels=128, kernel_size=3, padding=1, stride=2),
-            ReLU(),
-            Conv2d(in_channels=128, out_channels=128, kernel_size=3, padding=1, stride=1),
-            ReLU(),
-            Conv2d(in_channels=128, out_channels=128, kernel_size=3, padding=1, stride=1),
-            ReLU(),
-            Conv2d(in_channels=128, out_channels=128, kernel_size=3, padding=1, stride=1),
-            ReLU(), )
-        self.cnet_conv3 = Sequential(
-            Conv2d(in_channels=128, out_channels=256, kernel_size=3, padding=1, stride=2),
-            ReLU(),
-            Conv2d(in_channels=256, out_channels=256, kernel_size=3, padding=1, stride=1),
-            ReLU(),
-            Conv2d(in_channels=256, out_channels=256, kernel_size=3, padding=1, stride=1),
-            ReLU(),
-            Conv2d(in_channels=256, out_channels=256, kernel_size=3, padding=1, stride=1),
-            ReLU(),
-            Conv2d(in_channels=256, out_channels=256, kernel_size=3, padding=1, stride=1),
-            ReLU(),
-        )
-        self.encoder = Sequential(self.cnet_conv1, self.cnet_conv2, self.cnet_conv3)
+        self.pool1 = AvgPool2d(kernel_size=2, stride=2, padding=0)
 
-        # === 2upsampling ===
-        self.up1 = ConvTranspose2d(in_channels=256, out_channels=128, kernel_size=3, stride=2, padding=1, output_padding=1)
-        self.conv_up1 = Sequential(
-            Conv2d(in_channels=256, out_channels=128, kernel_size=3, padding=1, stride=1),
+        self.conv2 = nn.Sequential(
+            Conv2d(64, 128, kernel_size=3, padding=1),
             ReLU(),
-            Conv2d(in_channels=128, out_channels=128, kernel_size=3, padding=1, stride=1),
+            Conv2d(128, 128, kernel_size=3, padding=1),
             ReLU(),
-            Conv2d(in_channels=128, out_channels=128, kernel_size=3, padding=1, stride=1),
-            ReLU(),
+            Conv2d(128, 128, kernel_size=3, padding=1),
+            ReLU()
         )
-        self.up2 = ConvTranspose2d(in_channels=128, out_channels=64, kernel_size=3, stride=2, padding=1, output_padding=1)
-        self.conv_up2 = Sequential(
-            Conv2d(in_channels=128, out_channels=64, kernel_size=3, padding=1, stride=1),
-            ReLU(),
-            Conv2d(in_channels=64, out_channels=1, kernel_size=3, padding=1, stride=1),
-            Sigmoid()
+        self.pool2 = AvgPool2d(kernel_size=2, stride=2, padding=0)
 
+        self.conv3 = nn.Sequential(
+            Conv2d(128, 256, kernel_size=3, padding=1),
+            ReLU(),
+            Conv2d(256, 256, kernel_size=3, padding=1),
+            ReLU(),
+            Conv2d(256, 256, kernel_size=3, padding=1),
+            ReLU(),
+            Conv2d(256, 256, kernel_size=3, padding=1),
+            ReLU(),
+            Conv2d(256, 256, kernel_size=3, padding=1),
+            ReLU(),
+            Conv2d(256, 256, kernel_size=3, padding=1),
+            ReLU()
         )
-        
-    def forward(self, x:Tensor) -> Tensor:
-        """
-        Perform forward pass with skip connections, returns:
-        - reconstruncted image
-        - noise map
-        """
+
+        # === Decoder ===
+        self.up1 = nn.ConvTranspose2d(256, 128, kernel_size=3, stride=2, padding=1, output_padding=1)
+        self.up1_conv = nn.Sequential(
+            Conv2d(128, 128, kernel_size=3, padding=1),
+            ReLU(),
+            Conv2d(128, 128, kernel_size=3, padding=1),
+            ReLU(),
+            Conv2d(128, 128, kernel_size=3, padding=1),
+            ReLU()
+        )
+
+        self.up2 = nn.ConvTranspose2d(128, 64, kernel_size=3, stride=2, padding=1, output_padding=1)
+        self.up2_conv = nn.Sequential(
+            Conv2d(64, 64, kernel_size=3, padding=1),
+            ReLU(),
+            Conv2d(64, 64, kernel_size=3, padding=1),
+            ReLU()
+        )
+
+        self.output_conv = Conv2d(64, 1, kernel_size=1, padding=0)
+
+    def forward(self, x: Tensor):
         noise_map = self.noise_estimator(x)
-        out = t.cat([x, noise_map], dim=1)  
-        acts = []
-        # # store activations for skipping connections 
-        for layer in self.encoder:
-            out = layer(out)
-            acts.append(out)
-        out = self.up1(out)
-        # first skip connection
-        skip_con1 = t.cat([out, acts[-2]], dim=1)
-        out = self.conv_up1(skip_con1)
+        x_cat = t.cat([x, noise_map], dim=1)
 
-        out = self.up2(out)
+        c1 = self.conv1(x_cat)
+        p1 = self.pool1(c1)
 
-        # second skip connection 
-        skip_con2 = t.cat([out, acts[-3]], dim=1)
-        out = self.conv_up2(skip_con2)
+        c2 = self.conv2(p1)
+        p2 = self.pool2(c2)
 
-        return x + out, noise_map
+        c3 = self.conv3(p2)
+
+        up1 = self.up1(c3)
+        up1 = up1 + c2  # skip connection
+        up1 = self.up1_conv(up1)
+
+        up2 = self.up2(up1)
+        up2 = up2 + c1  # skip connection
+        up2 = self.up2_conv(up2)
+
+        out = self.output_conv(up2)
+        final = out + x  # residual connection
+
+        return final, noise_map
 
         
 
