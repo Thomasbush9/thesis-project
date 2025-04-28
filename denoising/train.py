@@ -89,6 +89,33 @@ def addRealisticNoise(img: torch.Tensor, sigma_s=0.12, sigma_c=0.03) -> torch.Te
 
     # Forward CRF to get final noisy image
     return noisy_img ** (1 / 2.2)  # CRF simulation
+def add_physical_noise(img, gamma=2.2, poisson_scale=5000, sigma_c=0.01):
+    """
+    Simulates realistic sensor noise:
+    - inverse CRF
+    - true Poisson noise
+    - additive Gaussian noise
+    - forward CRF
+    """
+
+    # 1. Inverse CRF
+    img_lin = torch.clamp(img ** gamma, 0, 1)
+
+    # 2. Poisson shot noise (must run on CPU if on MPS)
+    device = img_lin.device
+    img_cpu = img_lin.cpu()
+    photon_img = torch.poisson(img_cpu * poisson_scale) / poisson_scale
+    photon_img = photon_img.to(device)
+
+    # 3. Gaussian read noise
+    noise_c = torch.randn_like(img_lin) * sigma_c
+
+    noisy_lin = torch.clamp(photon_img + noise_c, 0, 1)
+
+    # 4. Forward CRF
+    return torch.clamp(noisy_lin ** (1 / gamma), 0, 1)
+
+
 
 
 def buildDatasetFromTensor(input:Tensor, dim:int, train_ratio:float=.8)->tuple:
@@ -273,18 +300,19 @@ class CBDNetTrainer():
         real_sigma = t.abs(imgs - noisy_imgs)
         pred_img, pred_sigma = self.model.forward(noisy_imgs)
         loss_ne = self.asym_loss(pred_sigma, real_sigma)
-        loss_mse = self.loss_rec(imgs, pred_img)
-        loss = .7 *loss_mse+  1.5 * loss_ne
+        loss = self.loss_rec(imgs, pred_img)
         loss.backward()
+        # loss = .7 *loss_mse+  1.5 * loss_ne
+        # loss.backward()
         self.optimizer.step()
         self.optimizer.zero_grad()
         self.step += imgs.shape[0]
 
         if self.args.use_wandb:
           wandb.log(dict(loss=loss,
-                         AsymLoss=loss_ne, MSE=loss_mse), step=self.step)
+                         AsymLoss=loss_ne, MSE=loss), step=self.step)
         
-        return loss, loss_ne, loss_mse
+        return loss, loss_ne
 
     @t.inference_mode()
     def log_samples(self) -> None:
@@ -324,9 +352,9 @@ class CBDNetTrainer():
 
             for imgs in progress_bar:
                 imgs = imgs.to(self.device)
-                noisy = addRealisticNoise(imgs, sigma_s=0.15, sigma_c=0.07)
-                loss, loss_ne, loss_mse = self.training_step(imgs, noisy)
-                progress_bar.set_description(f"{epoch=:02d}, {loss=:.4f}, MSE:{loss_mse:.4f}, NE:{loss_ne:.4f} step={self.step:05d}")
+                noisy = addRealisticNoise(imgs, sigma_s=0.08, sigma_c=0.02)
+                loss, loss_ne = self.training_step(imgs, noisy)
+                progress_bar.set_description(f"{epoch=:02d}, {loss=:.4f},  NE:{loss_ne:.4f} step={self.step:05d}")
                 # log every 250 steps
                 if self.step % self.args.log_every_n_steps == 0:
                   self.log_samples()
@@ -347,6 +375,9 @@ if __name__ == '__main__':
 
     args = parser.parse_args()
     data_path = args.data_path
+
+    data_path = '/Users/thomasbush/Documents/DSS_Tilburg/data/keyframes/_2025-04-22 00:25:47.432414_keyframes.pth'
+
 
     data = torch.load(data_path, map_location='cpu', weights_only=False)
     keyframes = data['keyframes']

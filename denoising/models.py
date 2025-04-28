@@ -58,7 +58,7 @@ class AutoEncoder(nn.Module):
 
 # === VAE or UNET ===
 
-#TODO: optimize network 
+#TODO: optimize network and define better loss (maybe just MSE)
 # ==== CBDNet — Convolutional Blind Denoising Network ===
 class CBDNet(nn.Module):
     def __init__(self):
