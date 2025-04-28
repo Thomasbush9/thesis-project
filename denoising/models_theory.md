@@ -65,8 +65,41 @@ Training is performed using the Adam optimizer with configurable learning rate a
 
 To monitor model performance during training, a holdout set of patches corresponding to one full frame is reserved. These are passed through the model at regular intervals (log_every_n_steps), and the reconstructed patches are assembled back into a full frame using the inverse of the patching process. Both the original and reconstructed images are saved or logged (optionally via Weights & Biases) for qualitative inspection.
 
+## RIDNet: Real Image Denoising with Feature Attention
+
+There are three main modules:
+
+1. Feature extraction
+
+It's a simple convolutional layer to extract features. Given the noisy input x it produces $f_0 = M_{fl}(x)$
+
+
+2. feature learning residual (residual modu
+
+M_{fl} takes the output of the convolutional layer and produces f_r 
+
+3. Reconstruction 
+ it is a simple convolitions to reconstruct the original image. 
+
+**Loss**: l1 or MAE over batch dim. 
+
+### Feature Learning Residual on the Residual 
+
+
+
+
+## Pyramid Real image Denoising network: PRIDNet
+
+
+
+
 ## Metrics:
 
 1. MSE V
 2. SSIM: structure similarity 
 3. Impact over keypoint tracking (reprojection error?)
+
+4. Final loss: select the best models with their loss and then compare their performances over the actual task. 
+So the training regime consists of train each model with their losses, then compare them and select each model to compete in the pipeline to construct the 3D image. 
+
+- PCA Loss, reprojection loss over one video. 
