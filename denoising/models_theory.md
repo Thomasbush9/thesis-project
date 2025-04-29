@@ -90,6 +90,29 @@ M_{fl} takes the output of the convolutional layer and produces f_r
 
 ## Pyramid Real image Denoising network: PRIDNet
 
+The innovative components are:
+
+- Channel attention: it extracts noise features by recalibrating the channel importantce (as different channels carry different noise information) = not good for the project as we deal with gray scale images
+- Multi-scale feature extraction: pyramid structure, each branch pays attention to one-scale features. 
+
+- Feature self-adaptive fusion: each channel represents one-scale features, here they fuse the different scales into a single one. 
+
+
+**Network**: three stages: noise estimation, multi-scale denoising, feature fusion. 
+
+1. Noise estimation: plain five-layer fully conv (pooling, Batch norm, ReLU after each conv). Conv2D(k=3, oc = 32). In addition, they insert an attention module to calibrate the channels features (not necessary as we have one single channle, maybe it would be cool to use patches as channels)
+
+2. Multi-scale denoising stage: 
+
+It is a five layer pyramid, the input feature maps are downsampled to different sizes, with the goal of capturing original, local and global information at the same time. 
+Pooling kerneles are set to: 1x1, 2x2, 3x3, 4x4, 8x8, 16x16
+After each pooled feature there is U-Net, total 5 unet with independent weights. At the final stage the multi-level features are upsampled by bilinear interpolation to the same size and concatenated
+
+3. Feature Fusion Stage: 
+
+Kernel selecting module 
+
+The network is trained optimizing the l1 loss 
 
 
 
