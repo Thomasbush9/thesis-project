@@ -177,6 +177,19 @@ class AttentionUnit(nn.Module):
         y = self.fc(y).view(b, c, 1, 1)
         return  x * y.expand_as(x)
 
+class PyramidPooling(nn.Module):
+
+    def __init__(self):
+        super().__init__()
+        self.pooling2 = AvgPool2d(kernel_size=2) # 32
+        self.pooling3 = AvgPool2d(kernel_size=4) # 16
+
+    def forward(self, x:Tensor):
+        
+        p1 = x
+        p2 = self.pooling2(x)
+        p3 = self.pooling3(x)
+        return p1, p2, p3
 
 
 class PRIDNet(nn.Module):
@@ -184,13 +197,15 @@ class PRIDNet(nn.Module):
         super().__init__()
 
         self.cam = Sequential(*[
-            Conv2d(in_channels=40 if i==0 else 64, out_channels=64, kernel_size=3, padding=1)
+            Conv2d(in_channels=40 if i==0 else 64, out_channels=64, kernel_size=3, padding=1),
             ReLU()
             for i in range(4)
         ])
+
         self.attention_unit = AttentionUnit(channels=64, reduction=4)
         self.conv = Sequential(Conv2d(in_channels=64, out_channels=40, kernel_size=3, padding=1), ReLU())
         
+        self.gen_ps = PyramidPooling()
         self.pyramid = None
 
         self.fusion = None
@@ -199,3 +214,5 @@ class PRIDNet(nn.Module):
         x_prime = self.cam(x)
         x_prime = self.attention_unit.forward(x_prime)
         x_prime = self.conv(x_prime)
+
+        p1, p2, p3 = self.gen_ps(x_prime)
