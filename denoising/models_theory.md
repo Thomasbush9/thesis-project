@@ -65,8 +65,64 @@ Training is performed using the Adam optimizer with configurable learning rate a
 
 To monitor model performance during training, a holdout set of patches corresponding to one full frame is reserved. These are passed through the model at regular intervals (log_every_n_steps), and the reconstructed patches are assembled back into a full frame using the inverse of the patching process. Both the original and reconstructed images are saved or logged (optionally via Weights & Biases) for qualitative inspection.
 
+## RIDNet: Real Image Denoising with Feature Attention
+
+There are three main modules:
+
+1. Feature extraction
+
+It's a simple convolutional layer to extract features. Given the noisy input x it produces $f_0 = M_{fl}(x)$
+
+
+2. feature learning residual (residual modu
+
+M_{fl} takes the output of the convolutional layer and produces f_r 
+
+3. Reconstruction 
+ it is a simple convolitions to reconstruct the original image. 
+
+**Loss**: l1 or MAE over batch dim. 
+
+### Feature Learning Residual on the Residual 
+
+
+
+
+## Pyramid Real image Denoising network: PRIDNet
+
+The innovative components are:
+
+- Channel attention: it extracts noise features by recalibrating the channel importantce (as different channels carry different noise information) = not good for the project as we deal with gray scale images
+- Multi-scale feature extraction: pyramid structure, each branch pays attention to one-scale features. 
+
+- Feature self-adaptive fusion: each channel represents one-scale features, here they fuse the different scales into a single one. 
+
+
+**Network**: three stages: noise estimation, multi-scale denoising, feature fusion. 
+
+1. Noise estimation: plain five-layer fully conv (pooling, Batch norm, ReLU after each conv). Conv2D(k=3, oc = 32). In addition, they insert an attention module to calibrate the channels features (not necessary as we have one single channle, maybe it would be cool to use patches as channels)
+
+2. Multi-scale denoising stage: 
+
+It is a five layer pyramid, the input feature maps are downsampled to different sizes, with the goal of capturing original, local and global information at the same time. 
+Pooling kerneles are set to: 1x1, 2x2, 3x3, 4x4, 8x8, 16x16
+After each pooled feature there is U-Net, total 5 unet with independent weights. At the final stage the multi-level features are upsampled by bilinear interpolation to the same size and concatenated
+
+3. Feature Fusion Stage: 
+
+Kernel selecting module 
+
+The network is trained optimizing the l1 loss 
+
+
+
 ## Metrics:
 
 1. MSE V
 2. SSIM: structure similarity 
 3. Impact over keypoint tracking (reprojection error?)
+
+4. Final loss: select the best models with their loss and then compare their performances over the actual task. 
+So the training regime consists of train each model with their losses, then compare them and select each model to compete in the pipeline to construct the 3D image. 
+
+- PCA Loss, reprojection loss over one video. 
