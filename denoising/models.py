@@ -1,9 +1,8 @@
-
 import torch as t
 import numpy as np
 import einops
 from einops.layers.torch import Rearrange
-from torch.nn import Conv2d, ConvTranspose2d, Sequential, ReLU, BatchNorm2d, Linear, Sigmoid, AvgPool2d
+from torch.nn import Conv2d, ConvTranspose2d, Sequential, ReLU, BatchNorm2d, Linear, Sigmoid, AvgPool2d, AdaptiveAvgPool2d
 from torch import Tensor, nn
 from utils import generatePatches
 
@@ -56,7 +55,7 @@ class AutoEncoder(nn.Module):
 # === Sparse AutoEncoder ===
 
 
-# === VAE or UNET ===
+# === VAE ===
 
 #TODO: optimize network and define better loss (maybe just MSE)
 # ==== CBDNet — Convolutional Blind Denoising Network ===
@@ -160,3 +159,43 @@ class CBDNet(nn.Module):
 
         
 
+# === PRIDNet: pyramid real image denoising network ===
+class AttentionUnit(nn.Module):
+    def __init__(self, channels, reduction:int=4):
+        super().__init__()
+
+        self.avg_pool = AdaptiveAvgPool2d(1)
+        self.fc = Sequential(
+            Linear(channels, channels // reduction, bias=False),
+            ReLU(inplace=True),
+            Linear(channels // reduction, channels, bias=False),
+            Sigmoid()
+        )
+    def forward(self, x:Tensor)->Tensor:
+        b, c, w, h = x.shape
+        y = self.avg_pool(x).view(b, c)
+        y = self.fc(y).view(b, c, 1, 1)
+        return  x * y.expand_as(x)
+
+
+
+class PRIDNet(nn.Module):
+    def __init__(self):
+        super().__init__()
+
+        self.cam = Sequential(*[
+            Conv2d(in_channels=40 if i==0 else 64, out_channels=64, kernel_size=3, padding=1)
+            ReLU()
+            for i in range(4)
+        ])
+        self.attention_unit = AttentionUnit(channels=64, reduction=4)
+        self.conv = Sequential(Conv2d(in_channels=64, out_channels=40, kernel_size=3, padding=1), ReLU())
+        
+        self.pyramid = None
+
+        self.fusion = None
+
+    def forward(self, x:Tensor)-> Tensor:
+        x_prime = self.cam(x)
+        x_prime = self.attention_unit.forward(x_prime)
+        x_prime = self.conv(x_prime)
