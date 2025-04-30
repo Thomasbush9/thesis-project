@@ -177,12 +177,13 @@ class AttentionUnit(nn.Module):
         y = self.fc(y).view(b, c, 1, 1)
         return  x * y.expand_as(x)
 
+#TODO: check the avg downsample
 class PyramidPooling(nn.Module):
 
     def __init__(self):
         super().__init__()
-        self.pooling2 = AvgPool2d(kernel_size=2) # 32
-        self.pooling3 = AvgPool2d(kernel_size=4) # 16
+        self.pooling2 = AvgPool2d(kernel_size=2, stride=2, padding=0) # 32
+        self.pooling3 = AvgPool2d(kernel_size=2, stride=4, padding=0) # 16
 
     def forward(self, x:Tensor):
         
@@ -191,28 +192,113 @@ class PyramidPooling(nn.Module):
         p3 = self.pooling3(x)
         return p1, p2, p3
 
+        
+class UNET(nn.Module):
+    def __init__(self, dim: int, in_channels: int):
+        super().__init__()
+        assert dim % 16 == 0, 'Dim must be divisible by 16!'
+        self.dim = dim
+        self.num = dim.bit_length() - 5  # log2(dim) - log2(16)
+        self.in_channels = in_channels
+        base_channels = 64
+
+        self.encoder = nn.ModuleList()
+        self.decoder = nn.ModuleList()
+        self.skips = []
+
+        # Encoder: downsample until 16x16
+        for i in range(self.num):
+            inc = in_channels if i == 0 else base_channels
+            self.encoder.append(
+                nn.Sequential(
+                    nn.Conv2d(inc, base_channels, kernel_size=3, stride=2, padding=1),
+                    nn.ReLU(inplace=True)
+                )
+            )
+
+        # Decoder: upsample back to original resolution
+        for i in range(self.num):
+            self.decoder.append(
+                nn.Sequential(
+                    nn.Conv2d(base_channels * 2, base_channels, kernel_size=3, padding=1),
+                    nn.ReLU(inplace=True)
+                )
+            )
+
+        self.upsample = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False)
+        self.final = nn.Conv2d(base_channels, in_channels, kernel_size=3, padding=1)
+
+    def forward(self, x: Tensor) -> Tensor:
+        skips = []
+        out = x
+
+        # Encoder path
+        for enc in self.encoder:
+            out = enc(out)
+            skips.append(out)
+
+        # Decoder path
+        for dec in reversed(self.decoder):
+            out = self.upsample(out)
+            skip = skips.pop(-1)
+            out = t.cat([out, skip], dim=1)
+            out = dec(out)
+
+        return self.final(out)
+    
+class FeatureFusions(nn.Module):
+
+    def __init__(self, in_channels:int):
+        super().__init__()
+        
+        self.conv1 = Conv2d(in_channels=in_channels, out_channels=in_channels, kernel_size=3, padding=1)
+        self.conv2 = Conv2d(in_channels=in_channels, out_channels=in_channels, kernel_size=5, padding=2)
+        self.conv3 = Conv2d(in_channels=in_channels, out_channels=in_channels, kernel_size=7, padding=3)
+
+    def forward(self, x:Tensor)->Tensor:
+
+        out = x
+        u1 = self.conv1(x)
+        u2 = self.conv2(x)
+        u3 = self.conv3(x)
+
+        tot = u1 + u2 + u3
+                
 
 class PRIDNet(nn.Module):
     def __init__(self):
         super().__init__()
 
-        self.cam = Sequential(*[
+        self.cam = Sequential(nn.ModuleList([(
             Conv2d(in_channels=40 if i==0 else 64, out_channels=64, kernel_size=3, padding=1),
-            ReLU()
+            ReLU())
             for i in range(4)
-        ])
+        ]))
 
         self.attention_unit = AttentionUnit(channels=64, reduction=4)
         self.conv = Sequential(Conv2d(in_channels=64, out_channels=40, kernel_size=3, padding=1), ReLU())
         
         self.gen_ps = PyramidPooling()
-        self.pyramid = None
 
+        self.unet1 = UNET(dim=64, in_channels=40)
+        self.unet2 = UNET(dim=32, in_channels=40)
+        self.unet3 = UNET(dim=16, in_channels=40)
+
+        # TODO fusion features 
         self.fusion = None
 
     def forward(self, x:Tensor)-> Tensor:
         x_prime = self.cam(x)
         x_prime = self.attention_unit.forward(x_prime)
         x_prime = self.conv(x_prime)
+        # decide whether to add another cat
 
         p1, p2, p3 = self.gen_ps(x_prime)
+
+        p1_prime, p2_prime, p3_prime = self.unet1(p1), self.unet2(p2), self.unet3(p3)
+
+        x_conc = t.cat((p1_prime, p2_prime, p3_prime, x_prime))
+
+
+
+        
