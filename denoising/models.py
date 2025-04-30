@@ -1,3 +1,4 @@
+#%%
 import torch as t
 import numpy as np
 import einops
@@ -5,7 +6,8 @@ from einops.layers.torch import Rearrange
 from torch.nn import Conv2d, ConvTranspose2d, Sequential, ReLU, BatchNorm2d, Linear, Sigmoid, AvgPool2d, AdaptiveAvgPool2d
 from torch import Tensor, nn
 from utils import generatePatches
-
+import math
+#%%
 #TODO: review and see if you have to init the weights 
 def weights_init(m):
     if isinstance(m, Conv2d) or isinstance(m, nn.ConvTranspose2d):
@@ -160,6 +162,8 @@ class CBDNet(nn.Module):
         
 
 # === PRIDNet: pyramid real image denoising network ===
+
+
 class AttentionUnit(nn.Module):
     def __init__(self, channels, reduction:int=4):
         super().__init__()
@@ -177,7 +181,7 @@ class AttentionUnit(nn.Module):
         y = self.fc(y).view(b, c, 1, 1)
         return  x * y.expand_as(x)
 
-#TODO: check the avg downsample
+
 class PyramidPooling(nn.Module):
 
     def __init__(self):
@@ -194,37 +198,32 @@ class PyramidPooling(nn.Module):
 
         
 class UNET(nn.Module):
-    def __init__(self, dim: int, in_channels: int):
+    def __init__(self, input_size: int, in_channels: int):
         super().__init__()
-        assert dim % 16 == 0, 'Dim must be divisible by 16!'
-        self.dim = dim
-        self.num = dim.bit_length() - 5  # log2(dim) - log2(16)
-        self.in_channels = in_channels
+        assert input_size >= 16 and (input_size & (input_size - 1)) == 0, "Input size must be a power of 2 and ≥ 16"
+
         base_channels = 64
+        self.depth = int(math.log2(input_size)) - 4  # e.g., 64 → 2, 32 → 1, 16 → 0
 
         self.encoder = nn.ModuleList()
         self.decoder = nn.ModuleList()
-        self.skips = []
 
-        # Encoder: downsample until 16x16
-        for i in range(self.num):
+        # Conv layers for encoding (without pooling inside)
+        for i in range(self.depth + 1):
             inc = in_channels if i == 0 else base_channels
-            self.encoder.append(
-                nn.Sequential(
-                    nn.Conv2d(inc, base_channels, kernel_size=3, stride=2, padding=1),
-                    nn.ReLU(inplace=True)
-                )
-            )
+            self.encoder.append(nn.Sequential(
+                nn.Conv2d(inc, base_channels, kernel_size=3, padding=1),
+                nn.ReLU(inplace=True)
+            ))
 
-        # Decoder: upsample back to original resolution
-        for i in range(self.num):
-            self.decoder.append(
-                nn.Sequential(
-                    nn.Conv2d(base_channels * 2, base_channels, kernel_size=3, padding=1),
-                    nn.ReLU(inplace=True)
-                )
-            )
+        # Decoder layers: upsample + conv
+        for _ in range(self.depth):
+            self.decoder.append(nn.Sequential(
+                nn.Conv2d(base_channels * 2, base_channels, kernel_size=3, padding=1),
+                nn.ReLU(inplace=True)
+            ))
 
+        self.pool = nn.MaxPool2d(kernel_size=2)
         self.upsample = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False)
         self.final = nn.Conv2d(base_channels, in_channels, kernel_size=3, padding=1)
 
@@ -232,15 +231,21 @@ class UNET(nn.Module):
         skips = []
         out = x
 
-        # Encoder path
-        for enc in self.encoder:
-            out = enc(out)
+        # Encoder: pool AFTER saving skip, not inside conv block
+        for i in range(self.depth):
+            out = self.encoder[i](out)
             skips.append(out)
+            out = self.pool(out)
 
-        # Decoder path
-        for dec in reversed(self.decoder):
+        # Final encoder conv (bottom of the U)
+        out = self.encoder[-1](out)
+
+        # Decoder
+        for dec in self.decoder:
             out = self.upsample(out)
             skip = skips.pop(-1)
+            if out.shape[-2:] != skip.shape[-2:]:
+                out = t.nn.interpolate(out, size=skip.shape[-2:], mode='bilinear', align_corners=False)
             out = t.cat([out, skip], dim=1)
             out = dec(out)
 
@@ -248,44 +253,83 @@ class UNET(nn.Module):
     
 class FeatureFusions(nn.Module):
 
-    def __init__(self, in_channels:int):
+    def __init__(self, in_channels:int, reduction:int=4):
         super().__init__()
         
         self.conv1 = Conv2d(in_channels=in_channels, out_channels=in_channels, kernel_size=3, padding=1)
         self.conv2 = Conv2d(in_channels=in_channels, out_channels=in_channels, kernel_size=5, padding=2)
         self.conv3 = Conv2d(in_channels=in_channels, out_channels=in_channels, kernel_size=7, padding=3)
+        self.avg_pool = AdaptiveAvgPool2d(1)
+
+        self.fc = Sequential(
+            Linear(in_channels, in_channels // reduction, bias=False),
+            ReLU(inplace=True),
+            )
+        
+        # logit attention heads:
+        self.alpha = Linear(in_channels//reduction, in_channels, bias=False)
+        self.beta = Linear(in_channels//reduction, in_channels, bias=False)
+        self.gamma = Linear(in_channels//reduction, in_channels, bias=False)
+
+        
 
     def forward(self, x:Tensor)->Tensor:
-
+        b, c, w, h = x.shape
         out = x
         u1 = self.conv1(x)
         u2 = self.conv2(x)
         u3 = self.conv3(x)
 
         tot = u1 + u2 + u3
-                
+
+        y = self.avg_pool(tot).view(b, c)
+
+        s = self.fc(y)
+
+        a = self.alpha(s)
+        b_ = self.beta(s)
+        g = self.gamma(s)
+
+        weights = t.stack([a, b_, g], dim=1)  
+        weights = t.softmax(weights, dim=1) 
+
+        alpha, beta, gamma = weights.unbind(dim=1)
+        assert alpha.shape == (b, c), 'ERROR shape'
+
+        alpha = alpha.view((b, c, 1, 1))
+        beta = beta.view((b, c, 1, 1))
+        gamma = gamma.view((b, c, 1, 1))
+
+        return u1 * alpha + u2 * beta + u3 * gamma
+
 
 class PRIDNet(nn.Module):
     def __init__(self):
         super().__init__()
 
-        self.cam = Sequential(nn.ModuleList([(
-            Conv2d(in_channels=40 if i==0 else 64, out_channels=64, kernel_size=3, padding=1),
-            ReLU())
-            for i in range(4)
-        ]))
+        self.cam = nn.Sequential(
+            nn.Conv2d(40, 64, 3, padding=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(64, 64, 3, padding=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(64, 64, 3, padding=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(64, 64, 3, padding=1),
+            nn.ReLU(inplace=True)
+        )
 
         self.attention_unit = AttentionUnit(channels=64, reduction=4)
         self.conv = Sequential(Conv2d(in_channels=64, out_channels=40, kernel_size=3, padding=1), ReLU())
         
         self.gen_ps = PyramidPooling()
 
-        self.unet1 = UNET(dim=64, in_channels=40)
-        self.unet2 = UNET(dim=32, in_channels=40)
-        self.unet3 = UNET(dim=16, in_channels=40)
+        self.unet1 = UNET(input_size=64, in_channels=40)
+        self.unet2 = UNET(input_size=32, in_channels=40)
+        self.unet3 = UNET(input_size=16, in_channels=40)
 
-        # TODO fusion features 
-        self.fusion = None
+
+        self.fusion = FeatureFusions(in_channels=160)
+        self.output = Conv2d(160, 40, kernel_size=1)
 
     def forward(self, x:Tensor)-> Tensor:
         x_prime = self.cam(x)
@@ -297,8 +341,11 @@ class PRIDNet(nn.Module):
 
         p1_prime, p2_prime, p3_prime = self.unet1(p1), self.unet2(p2), self.unet3(p3)
 
-        x_conc = t.cat((p1_prime, p2_prime, p3_prime, x_prime))
+        p2_prime = t.nn.functional.interpolate(p2_prime, size=64, mode='bilinear', align_corners=False)
+        p3_prime = t.nn.functional.interpolate(p3_prime, size=64, mode='bilinear', align_corners=False)
+        x_conc = t.cat((p1_prime, p2_prime, p3_prime, x_prime), dim =1)
+
+        out = self.fusion(x_conc)
+        return self.output(out)
 
 
-
-        
