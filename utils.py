@@ -8,6 +8,7 @@ from torch.utils.data import Dataset
 from torchvision.transforms import transforms 
 from torch import Tensor 
 from torch.nn import functional as F
+import matplotlib.pyplot as plt
 
 # TODO: get dataset from patht to keyframes, train and test (holdout data)
 
@@ -117,3 +118,55 @@ def reconstructFromPatches(patches: Tensor, original_shape: tuple, padding: tupl
     return frames
 
 
+def plot_image_with_patches(patches_tensor, original_shape, patch_dim, padding, save_path: None|Path):
+    """
+    patches: tensor of shape (N, d, d) or (N, 1, d, d)
+    original_shape: tuple (H, W)
+    patch_dim: int
+    padding: tuple (top, bottom, left, right)
+    """
+    H, W = original_shape
+    pad_top, pad_bottom, pad_left, pad_right = padding
+
+    # Total padded dimensions
+    H_p = H + pad_top + pad_bottom
+    W_p = W + pad_left + pad_right
+
+    # Convert patches to tensor if needed
+    if isinstance(patches_tensor, np.ndarray):
+        patches_tensor = t.tensor(patches_tensor)
+
+    # If patches have channels, remove it
+    if patches_tensor.dim() == 4 and patches_tensor.shape[1] == 1:
+        patches_tensor = patches_tensor.squeeze(1)
+
+    # Reconstruct the image from patches
+    num_patches_h = H_p // patch_dim
+    num_patches_w = W_p // patch_dim
+    assert patches_tensor.shape[0] == num_patches_h * num_patches_w
+
+    patches_grid = patches_tensor.view(num_patches_h, num_patches_w, patch_dim, patch_dim)
+    reconstructed = patches_grid.permute(0, 2, 1, 3).contiguous().view(H_p, W_p)
+
+    # Remove the padding to recover the original image
+    reconstructed = reconstructed[pad_top:pad_top+H, pad_left:pad_left+W]
+
+    # Plot the image
+    fig, ax = plt.subplots(figsize=(6, 6))
+    ax.imshow(reconstructed, cmap='gray')
+    # ax.set_title("Image with Patch Boundaries")
+
+    for i in range(0, H_p, patch_dim):
+        for j in range(0, W_p, patch_dim):
+            # Draw rectangles in padded space
+            y = i - pad_top
+            x = j - pad_left
+            rect = patches.Rectangle((x, y), patch_dim, patch_dim,
+                                            linewidth=0.5, edgecolor='blue', facecolor='none')
+            ax.add_patch(rect)
+
+    plt.axis('off')
+    plt.tight_layout()
+    if save_path is not None:
+        plt.savefig(save_path / "patches_overlay.svg", format="svg", bbox_inches="tight")
+    plt.show()
