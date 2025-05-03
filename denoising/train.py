@@ -25,18 +25,18 @@ class CustomDataset(Dataset):
 
     def __len__(self):
         return self.frames.shape[0]
-    
+
     def __getitem__(self, idx):
-        img = self.frames[idx]  
+        img = self.frames[idx]
         return img
 
-# new loss function 
+# new loss function
 class SSIMLoss(SSIM):
     def __init__(self, window_size: int = 11, sigma: float = 1.5, n_channels: int = 1, reduction: str = 'mean', **kwargs):
         super().__init__(window_size, sigma, n_channels, reduction, **kwargs)
     def forward(self, x, y):
         return 1. - super().forward(x, y)
-    
+
 class AsymmetricLoss(nn.Module):
     def __init__(self, alpha: float = 0.3):
         """
@@ -52,11 +52,11 @@ class AsymmetricLoss(nn.Module):
         target: ground-truth noise map (B, C, H, W)
         """
         diff = pred - target
-        mask = (diff < 0).float()  
+        mask = (diff < 0).float()
         weights = self.alpha * (1 - mask) + (1 - self.alpha) * mask
         loss = weights * (diff ** 2)
         return loss.mean()
-    
+
 # === noise creation ===
 def addPoissoinGaussiaNoise(img: torch.Tensor, sigma_s=0.01, sigma_c=0.005):
     """
@@ -143,7 +143,7 @@ def getHoldoutData(testset:Dataset, num_data:int=40)->Tensor:
     assert len(testset) % num_data==0, f'{num_data} makes a whole img'
     # extract imgs
     imgs = next(iter(DataLoader(testset, batch_size=num_data, shuffle=False)))
-    return imgs 
+    return imgs
 # === AutoEncoder Trainer ===
 @dataclass
 class AutoencoderArgs:
@@ -202,7 +202,7 @@ class AutoencoderTrainer:
         if self.args.use_wandb:
           wandb.log(dict(loss=loss,
                          SSIM=loss_ssim, MSE=loss_mse), step=self.step)
-        
+
 
         return loss, loss_ssim, loss_mse
 # TODO: make patches in right order
@@ -229,7 +229,7 @@ class AutoencoderTrainer:
         if self.args.use_wandb:
             wandb.log({"reconstruction": wandb.Image(img_grid)}, step=self.step)
         else:
-            plt.imshow(make_grid(img_grid).permute(1, 2, 0))  
+            plt.imshow(make_grid(img_grid).permute(1, 2, 0))
 
     def train(self) -> AutoEncoder:
         """Performs a full training run."""
@@ -282,7 +282,7 @@ class CBDNetArgs:
 
 class CBDNetTrainer():
     def __init__(self, args:CBDNetArgs, device:Literal['cpu', 'mps']) -> None:
-        
+
         self.args = args
         self.device = device
         self.trainset = args.trainset
@@ -293,7 +293,7 @@ class CBDNetTrainer():
         self.asym_loss = AsymmetricLoss()
         self.loss_rec = nn.MSELoss()
         self.optimizer = t.optim.Adam(self.model.parameters(), lr=self.args.lr, betas=self.args.betas)
-    
+
     def training_step(self, imgs:Tensor, noisy_imgs:Tensor):
         '''Perform a single training step'''
         self.model.train()
@@ -311,7 +311,7 @@ class CBDNetTrainer():
         if self.args.use_wandb:
           wandb.log(dict(loss=loss,
                          AsymLoss=loss_ne, MSE=loss), step=self.step)
-        
+
         return loss, loss_ne
 
     @t.inference_mode()
@@ -338,7 +338,7 @@ class CBDNetTrainer():
         if self.args.use_wandb:
             wandb.log({"reconstruction": wandb.Image(img_grid)}, step=self.step)
 
-    
+
     def train(self)->CBDNet:
         """Performs a full training run."""
         self.step = 0
@@ -376,7 +376,7 @@ if __name__ == '__main__':
     args = parser.parse_args()
     data_path = args.data_path
 
-    data_path = '/Users/thomasbush/Documents/DSS_Tilburg/data/keyframes/_2025-04-22 00:25:47.432414_keyframes.pth'
+    # data_path = '/Users/thomasbush/Documents/DSS_Tilburg/data/keyframes/_2025-04-22 00:25:47.432414_keyframes.pth'
 
 
     data = torch.load(data_path, map_location='cpu', weights_only=False)
@@ -387,7 +387,7 @@ if __name__ == '__main__':
     train_dataset, test_dataset, orig_shape, padding = buildDatasetFromTensor(keyframes, dim=64)
 
     args_trainer = AutoencoderArgs(trainset=train_dataset, testset=test_dataset, holdoutData=getHoldoutData(test_dataset), original_shape=orig_shape, padding=padding,
-                                    use_wandb=False) 
+                                    use_wandb=False)
 
 # === Start Trainign ===
     trainer = AutoencoderTrainer(args_trainer, device='mps') if args.m == "AE" else CBDNetTrainer(args_trainer, device='mps')
@@ -399,5 +399,5 @@ if __name__ == '__main__':
 
 
 
-    
- 
+
+

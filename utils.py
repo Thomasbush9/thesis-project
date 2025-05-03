@@ -9,6 +9,7 @@ from torchvision.transforms import transforms
 from torch import Tensor 
 from torch.nn import functional as F
 import matplotlib.pyplot as plt
+import matplotlib.patches as patches
 
 # TODO: get dataset from patht to keyframes, train and test (holdout data)
 
