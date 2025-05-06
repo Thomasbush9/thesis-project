@@ -8,7 +8,7 @@ from torch import Tensor, nn
 from utils import generatePatches
 import math
 #%%
-#TODO: review and see if you have to init the weights 
+#TODO: review and see if you have to init the weights
 def weights_init(m):
     if isinstance(m, Conv2d) or isinstance(m, nn.ConvTranspose2d):
         nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
@@ -31,7 +31,7 @@ class AutoEncoder(nn.Module):
             Conv2d(in_channels=1, out_channels=16, kernel_size=4, stride=2, padding=1),
             ReLU(),
             BatchNorm2d(num_features=16),
-            Conv2d(in_channels=16, out_channels=32, kernel_size=4, stride=2, padding=1), 
+            Conv2d(in_channels=16, out_channels=32, kernel_size=4, stride=2, padding=1),
             ReLU(),
             c2l,
             Linear(in_features=32*16*16, out_features=self.hidden),
@@ -159,7 +159,7 @@ class CBDNet(nn.Module):
 
         return final, noise_map
 
-        
+
 
 # === PRIDNet: pyramid real image denoising network ===
 
@@ -182,6 +182,30 @@ class AttentionUnit(nn.Module):
         return  x * y.expand_as(x)
 
 
+class LocalContextAttention(nn.Module):
+    def __init__(self, in_channels, kernel_size:int=7):
+        super().__init__()
+        self.in_channels = in_channels
+        self.kernel_size = kernel_size
+        self.unfold = nn.Unfold(kernel_size=kernel_size, padding=kernel_size//2)
+        self.attn_proj = nn.Sequential(
+            nn.Conv2d(in_channels, in_channels, 1),
+            nn.ReLU(),
+            nn.Conv2d(in_channels, in_channels, 1),
+            nn.Sigmoid()
+        )
+
+    def forward(self, x):
+        B, C, H, W = x.shape
+        x_proj = self.attn_proj(x)
+        patches = self.unfold(x).view(B, C, self.kernel_size**2, H, W)  # B x C x K^2 x H x W
+        x_proj = x_proj.unsqueeze(2)  # B x C x 1 x H x W
+
+        attn = t.softmax(patches * x_proj, dim=2)  # attention weights over local patch
+        out = (attn * patches).sum(dim=2)  # weighted sum
+        return out
+
+
 class PyramidPooling(nn.Module):
 
     def __init__(self):
@@ -190,13 +214,13 @@ class PyramidPooling(nn.Module):
         self.pooling3 = AvgPool2d(kernel_size=2, stride=4, padding=0) # 16
 
     def forward(self, x:Tensor):
-        
+
         p1 = x
         p2 = self.pooling2(x)
         p3 = self.pooling3(x)
         return p1, p2, p3
 
-        
+
 class UNET(nn.Module):
     def __init__(self, input_size: int, in_channels: int):
         super().__init__()
@@ -250,12 +274,12 @@ class UNET(nn.Module):
             out = dec(out)
 
         return self.final(out)
-    
+
 class FeatureFusions(nn.Module):
 
     def __init__(self, in_channels:int, reduction:int=4):
         super().__init__()
-        
+
         self.conv1 = Conv2d(in_channels=in_channels, out_channels=in_channels, kernel_size=3, padding=1)
         self.conv2 = Conv2d(in_channels=in_channels, out_channels=in_channels, kernel_size=5, padding=2)
         self.conv3 = Conv2d(in_channels=in_channels, out_channels=in_channels, kernel_size=7, padding=3)
@@ -265,13 +289,13 @@ class FeatureFusions(nn.Module):
             Linear(in_channels, in_channels // reduction, bias=False),
             ReLU(inplace=True),
             )
-        
+
         # logit attention heads:
         self.alpha = Linear(in_channels//reduction, in_channels, bias=False)
         self.beta = Linear(in_channels//reduction, in_channels, bias=False)
         self.gamma = Linear(in_channels//reduction, in_channels, bias=False)
 
-        
+
 
     def forward(self, x:Tensor)->Tensor:
         b, c, w, h = x.shape
@@ -290,8 +314,8 @@ class FeatureFusions(nn.Module):
         b_ = self.beta(s)
         g = self.gamma(s)
 
-        weights = t.stack([a, b_, g], dim=1)  
-        weights = t.softmax(weights, dim=1) 
+        weights = t.stack([a, b_, g], dim=1)
+        weights = t.softmax(weights, dim=1)
 
         alpha, beta, gamma = weights.unbind(dim=1)
         assert alpha.shape == (b, c), 'ERROR shape'
@@ -320,7 +344,7 @@ class PRIDNet(nn.Module):
 
         self.attention_unit = AttentionUnit(channels=64, reduction=4)
         self.conv = Sequential(Conv2d(in_channels=64, out_channels=40, kernel_size=3, padding=1), ReLU())
-        
+
         self.gen_ps = PyramidPooling()
 
         self.unet1 = UNET(input_size=64, in_channels=40)
