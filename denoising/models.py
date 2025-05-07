@@ -5,9 +5,10 @@ import einops
 from einops.layers.torch import Rearrange
 from torch.nn import Conv2d, ConvTranspose2d, Sequential, ReLU, BatchNorm2d, Linear, Sigmoid, AvgPool2d, AdaptiveAvgPool2d
 from torch import Tensor, nn
-from torch.nn.functional import interpolate
+from torch.nn.functional import interpolate, unfold
 from utils import generatePatches
 import math
+from einops import rearrange
 #%%
 #TODO: review and see if you have to init the weights
 def weights_init(m):
@@ -184,11 +185,10 @@ class AttentionUnit(nn.Module):
 
 
 class LocalContextAttention(nn.Module):
-    def __init__(self, in_channels, kernel_size:int=7):
+    def __init__(self, in_channels, kernel_size: int = 7):
         super().__init__()
         self.in_channels = in_channels
         self.kernel_size = kernel_size
-        self.unfold = nn.Unfold(kernel_size=kernel_size, padding=kernel_size//2)
         self.attn_proj = nn.Sequential(
             nn.Conv2d(in_channels, in_channels, 1),
             nn.ReLU(),
@@ -198,14 +198,19 @@ class LocalContextAttention(nn.Module):
 
     def forward(self, x):
         B, C, H, W = x.shape
-        x_proj = self.attn_proj(x)
-        patches = self.unfold(x).view(B, C, self.kernel_size**2, H, W)  # B x C x K^2 x H x W
-        x_proj = x_proj.unsqueeze(2)  # B x C x 1 x H x W
+        padding = self.kernel_size // 2
 
-        attn = t.softmax(patches * x_proj, dim=2)  # attention weights over local patch
-        out = (attn * patches).sum(dim=2)  # weighted sum
+        # Attention projection
+        x_proj = self.attn_proj(x).unsqueeze(2)  # B x C x 1 x H x W
+
+        # Extract patches
+        patches = unfold(x, kernel_size=self.kernel_size, padding=padding)  # [B, C*K*K, H*W]
+        patches = patches.view(B, C, self.kernel_size**2, H, W)  # [B, C, K^2, H, W]
+
+        # Compute attention
+        attn = t.softmax(patches * x_proj, dim=2)
+        out = (attn * patches).sum(dim=2)
         return out
-
 
 class PyramidPooling(nn.Module):
 
