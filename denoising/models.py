@@ -5,6 +5,7 @@ import einops
 from einops.layers.torch import Rearrange
 from torch.nn import Conv2d, ConvTranspose2d, Sequential, ReLU, BatchNorm2d, Linear, Sigmoid, AvgPool2d, AdaptiveAvgPool2d
 from torch import Tensor, nn
+from torch.nn.functional import interpolate
 from utils import generatePatches
 import math
 #%%
@@ -332,7 +333,7 @@ class PRIDNet(nn.Module):
         super().__init__()
 
         self.cam = nn.Sequential(
-            nn.Conv2d(40, 64, 3, padding=1),
+            nn.Conv2d(1, 64, 3, padding=1),
             nn.ReLU(inplace=True),
             nn.Conv2d(64, 64, 3, padding=1),
             nn.ReLU(inplace=True),
@@ -342,22 +343,25 @@ class PRIDNet(nn.Module):
             nn.ReLU(inplace=True)
         )
 
-        self.attention_unit = AttentionUnit(channels=64, reduction=4)
-        self.conv = Sequential(Conv2d(in_channels=64, out_channels=40, kernel_size=3, padding=1), ReLU())
+        # self.attention_unit = AttentionUnit(channels=64, reduction=4)
+        self.local_attention_unit = LocalContextAttention(in_channels=64, kernel_size=7)
+        self.conv = Sequential(Conv2d(in_channels=64, out_channels=64, kernel_size=3, padding=1), ReLU())
 
         self.gen_ps = PyramidPooling()
 
-        self.unet1 = UNET(input_size=64, in_channels=40)
-        self.unet2 = UNET(input_size=32, in_channels=40)
-        self.unet3 = UNET(input_size=16, in_channels=40)
+        self.unet1 = UNET(input_size=64, in_channels=64)
+        self.unet2 = UNET(input_size=32, in_channels=64)
+        self.unet3 = UNET(input_size=16, in_channels=64)
 
 
-        self.fusion = FeatureFusions(in_channels=160)
-        self.output = Conv2d(160, 40, kernel_size=1)
+
+        self.fusion = FeatureFusions(in_channels=64 * 4)  # = 256
+        self.output = Conv2d(256, 64, kernel_size=1)
+        self.final_out = Conv2d(64, 1, kernel_size=3, padding=1)
 
     def forward(self, x:Tensor)-> Tensor:
         x_prime = self.cam(x)
-        x_prime = self.attention_unit.forward(x_prime)
+        x_prime = self.local_attention_unit.forward(x_prime)
         x_prime = self.conv(x_prime)
         # decide whether to add another cat
 
@@ -365,11 +369,19 @@ class PRIDNet(nn.Module):
 
         p1_prime, p2_prime, p3_prime = self.unet1(p1), self.unet2(p2), self.unet3(p3)
 
-        p2_prime = t.nn.functional.interpolate(p2_prime, size=64, mode='bilinear', align_corners=False)
-        p3_prime = t.nn.functional.interpolate(p3_prime, size=64, mode='bilinear', align_corners=False)
-        x_conc = t.cat((p1_prime, p2_prime, p3_prime, x_prime), dim =1)
+        p2_prime = interpolate(p2_prime, size=64, mode='bilinear', align_corners=False)
+        p3_prime = interpolate(p3_prime, size=64, mode='bilinear', align_corners=False)
 
-        out = self.fusion(x_conc)
-        return self.output(out)
+        # Step 6: Concatenate all scales + attention output
+        x_concat = t.cat((p1_prime, p2_prime, p3_prime, x_prime), dim=1)  # → [B, 256, 64, 64]
+
+        # Step 7: Fusion and output
+        fused = self.fusion(x_concat)       # → [B, 256, 64, 64]
+        out = self.output(fused)            # → [B, 64, 64, 64]
+        out = self.final_out(out)           # → [B, 1, 64, 64] (final denoised grayscale image)
+
+        return out
+
+
 
 
