@@ -1,0 +1,16 @@
+method: bayes
+metric:
+  name: loss
+  goal: minimize
+parameters:
+  lr:
+    distribution: uniform
+    min: 0
+    max: 0.1
+  batch_size:
+    values: [16, 32, 64]
+program: train.py
+command:
+  - ${env}
+  - python
+  - train.py

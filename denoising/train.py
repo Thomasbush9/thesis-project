@@ -276,7 +276,7 @@ class CBDNetArgs:
 
     # logging
     use_wandb: bool = False
-    wandb_project: str | None = "thesis_dss_autoencoder"
+    wandb_project: str | None = "CBDNet"
     wandb_name: str | None = None
     log_every_n_steps: int = 250
 
@@ -290,29 +290,36 @@ class CBDNetTrainer():
         self.trainloader = DataLoader(self.trainset, batch_size=self.args.batch_size, shuffle=True)
         #define losses, optim, model:
         self.model = CBDNet().to(self.device)
-        self.asym_loss = AsymmetricLoss()
+        self.ssim = SSIMLoss().to(self.device)
         self.loss_rec = nn.MSELoss()
         self.optimizer = t.optim.Adam(self.model.parameters(), lr=self.args.lr, betas=self.args.betas)
 #TODO change loss with SSIM
-    def training_step(self, imgs:Tensor, noisy_imgs:Tensor):
-        '''Perform a single training step'''
+    def training_step(self, imgs: Tensor, noisy_imgs: Tensor):
         self.model.train()
         real_sigma = t.abs(imgs - noisy_imgs)
-        pred_img, pred_sigma = self.model.forward(noisy_imgs)
-        loss_ne = self.asym_loss(pred_sigma, real_sigma)
-        loss = self.loss_rec(imgs, pred_img)
+        pred_img, pred_sigma = self.model(noisy_imgs)
+
+
+        pred_img = torch.clamp(pred_img, 0.0, 1.0)
+        imgs = torch.clamp(imgs, 0.0, 1.0)
+
+        loss_ssim = self.ssim(pred_img, imgs)
+        loss_mse = self.loss_rec(pred_img, imgs)
+        loss = loss_mse + loss_ssim
+
+        assert not torch.isnan(loss), f"Loss is NaN at step {self.step}"
+        assert not torch.isinf(loss), f"Loss is Inf at step {self.step}"
+
         loss.backward()
-        # loss = .7 *loss_mse+  1.5 * loss_ne
-        # loss.backward()
+        torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
         self.optimizer.step()
         self.optimizer.zero_grad()
         self.step += imgs.shape[0]
 
         if self.args.use_wandb:
-          wandb.log(dict(loss=loss,
-                         AsymLoss=loss_ne, MSE=loss), step=self.step)
+            wandb.log(dict(loss=loss.item(), mse=loss_mse.item(), ssim=loss_ssim.item()), step=self.step)
 
-        return loss, loss_ne
+        return loss, loss_mse, loss_ssim
 
     @t.inference_mode()
     def log_samples(self) -> None:
@@ -353,8 +360,8 @@ class CBDNetTrainer():
             for imgs in progress_bar:
                 imgs = imgs.to(self.device)
                 noisy = addRealisticNoise(imgs, sigma_s=0.08, sigma_c=0.02)
-                loss, loss_ne = self.training_step(imgs, noisy)
-                progress_bar.set_description(f"{epoch=:02d}, {loss=:.4f},  NE:{loss_ne:.4f} step={self.step:05d}")
+                loss, loss_mse, loss_ssim = self.training_step(imgs, noisy)
+                progress_bar.set_description(f"{epoch=:02d}, Loss: {loss=:.4f},  MSE:{loss_mse:.4f}, SSIM:{loss_ssim:.4f} step={self.step:05d}")
                 # log every 250 steps
                 if self.step % self.args.log_every_n_steps == 0:
                   self.log_samples()
@@ -497,22 +504,35 @@ if __name__ == '__main__':
             config = wandb.config
 
             # Here you can override specific arguments from the sweep
-            args = AutoencoderArgs(
+            # args = AutoencoderArgs(
+                # trainset=train_dataset,
+                # testset=test_dataset,
+                # holdoutData=getHoldoutData(test_dataset),
+                # original_shape=orig_shape,
+                # padding=padding,
+                # latent_dim_size=config.latent_dim_size,
+                # hidden_dim_size=config.hidden_dim_size,
+                # lr=config.lr,
+                # batch_size=config.batch_size,
+                # use_wandb=True,
+                # wandb_project="thesis_dss_autoencoder",
+                # wandb_name=f"sweep_run_{wandb.run.id}"
+            # )
+            args = CBDNetArgs(
                 trainset=train_dataset,
                 testset=test_dataset,
                 holdoutData=getHoldoutData(test_dataset),
                 original_shape=orig_shape,
                 padding=padding,
-                latent_dim_size=config.latent_dim_size,
-                hidden_dim_size=config.hidden_dim_size,
                 lr=config.lr,
                 batch_size=config.batch_size,
                 use_wandb=True,
                 wandb_project="thesis_dss_autoencoder",
                 wandb_name=f"sweep_run_{wandb.run.id}"
+
             )
 
-            trainer = AutoencoderTrainer(args=args, device = "cuda" if torch.cuda.is_available() else ("mps" if torch.backends.mps.is_available() else "cpu"))
+            trainer = CBDNetTrainer(args=args, device = "cuda" if torch.cuda.is_available() else ("mps" if torch.backends.mps.is_available() else "cpu"))
             trainer.train()
     sweep_train()
 
