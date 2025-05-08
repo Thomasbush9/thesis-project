@@ -6,6 +6,7 @@ from einops.layers.torch import Rearrange
 from torch.nn import Conv2d, ConvTranspose2d, Sequential, ReLU, BatchNorm2d, Linear, Sigmoid, AvgPool2d, AdaptiveAvgPool2d
 from torch import Tensor, nn
 from torch.nn.functional import interpolate, unfold
+import torch.nn.functional as F
 from utils import generatePatches
 import math
 from einops import rearrange
@@ -183,6 +184,32 @@ class AttentionUnit(nn.Module):
         y = self.fc(y).view(b, c, 1, 1)
         return  x * y.expand_as(x)
 
+def extract_sliding_local_patches(x: t.Tensor, kernel_size: int) -> t.Tensor:
+    """
+    Extract sliding local patches (unfold) using as_strided (MPS-friendly).
+    Returns: Tensor of shape (B, C, kernel_size*kernel_size, H, W)
+    """
+    B, C, H, W = x.shape
+    pad = kernel_size // 2
+    x = F.pad(x, (pad, pad, pad, pad), mode='reflect')  # [B, C, H+2p, W+2p]
+
+    # Get sliding window view using as_strided
+    # Shape: B x C x H x W x k x k
+    x_strided = x.as_strided(
+        size=(B, C, H, W, kernel_size, kernel_size),
+        stride=(
+            x.stride(0),
+            x.stride(1),
+            x.stride(2),
+            x.stride(3),
+            x.stride(2),
+            x.stride(3),
+        ),
+    )
+
+    # Rearrange to: B x C x (k*k) x H x W
+    patches = rearrange(x_strided, "b c h w kh kw -> b c (kh kw) h w")
+    return patches
 
 class LocalContextAttention(nn.Module):
     def __init__(self, in_channels, kernel_size: int = 7):
@@ -190,26 +217,21 @@ class LocalContextAttention(nn.Module):
         self.in_channels = in_channels
         self.kernel_size = kernel_size
         self.attn_proj = nn.Sequential(
-            nn.Conv2d(in_channels, in_channels, 1),
-            nn.ReLU(),
-            nn.Conv2d(in_channels, in_channels, 1),
-            nn.Sigmoid()
+            Conv2d(in_channels, in_channels, 1),
+            ReLU(),
+            Conv2d(in_channels, in_channels, 1),
+            Sigmoid()
         )
 
     def forward(self, x):
         B, C, H, W = x.shape
-        padding = self.kernel_size // 2
 
-        # Attention projection
         x_proj = self.attn_proj(x).unsqueeze(2)  # B x C x 1 x H x W
 
-        # Extract patches
-        patches = unfold(x, kernel_size=self.kernel_size, padding=padding)  # [B, C*K*K, H*W]
-        patches = patches.view(B, C, self.kernel_size**2, H, W)  # [B, C, K^2, H, W]
+        patches = extract_sliding_local_patches(x, self.kernel_size)  # B x C x k^2 x H x W
 
-        # Compute attention
         attn = t.softmax(patches * x_proj, dim=2)
-        out = (attn * patches).sum(dim=2)
+        out = (attn * patches).sum(dim=2)  # B x C x H x W
         return out
 
 class PyramidPooling(nn.Module):
