@@ -1,3 +1,4 @@
+#%%
 import wandb
 import torch as t
 from torch.utils.data import DataLoader, Dataset, Subset
@@ -124,17 +125,19 @@ def buildDatasetFromTensor(input:Tensor, dim:int, train_ratio:float=.8)->tuple:
     patches_frames, original_shape, padding = generatePatches(input, dim)
 
     tot_patches = einops.rearrange(patches_frames, 'f p h w -> (f p ) 1 h w', h=dim, w=dim).type(torch.float)
-
-    dataset = CustomDataset(tot_patches)
+    holdout_data = tot_patches[:40]
+    
+    dataset = CustomDataset(tot_patches[40:])
 
     # Split into train/test
     total_len = len(dataset)
     train_len = int(train_ratio * total_len)
     test_len = total_len - train_len
 
+
     train_dataset, test_dataset = random_split(dataset, [train_len, test_len])
 
-    return train_dataset, test_dataset, original_shape, padding
+    return train_dataset, test_dataset, original_shape, padding, holdout_data
 
 
 def getHoldoutData(testset:Dataset, num_data:int=40)->Tensor:
@@ -164,7 +167,7 @@ class AutoencoderArgs:
 
     # logging
     use_wandb: bool = False
-    wandb_project: str | None = "thesis_dss_CBDNet"
+    wandb_project: str | None = "thesis_dss_autoencoder"
     wandb_name: str | None = None
     log_every_n_steps: int = 250
 
@@ -474,8 +477,6 @@ class PRIDNetTrainer():
 
         return self.model
 
-
-
 if __name__ == '__main__':
 
     parser = argparse.ArgumentParser(prog="Denoising training")
@@ -498,50 +499,51 @@ if __name__ == '__main__':
     keyframes = keyframes / 255.0  # shape: (frames, H, W)
     idx = data['keyframe_idx']
 
-    train_dataset, test_dataset, orig_shape, padding = buildDatasetFromTensor(keyframes, dim=64)
-    def sweep_train(config=None):
-        with wandb.init(config=config):
-            config = wandb.config
+    train_dataset, test_dataset, orig_shape, padding, holdout_data = buildDatasetFromTensor(keyframes, dim=64)
+    # def sweep_train(config=None):
+    #     with wandb.init(config=config):
+    #         config = wandb.config
 
-            # Here you can override specific arguments from the sweep
-            # args = AutoencoderArgs(
-                # trainset=train_dataset,
-                # testset=test_dataset,
-                # holdoutData=getHoldoutData(test_dataset),
-                # original_shape=orig_shape,
-                # padding=padding,
-                # latent_dim_size=config.latent_dim_size,
-                # hidden_dim_size=config.hidden_dim_size,
-                # lr=config.lr,
-                # batch_size=config.batch_size,
-                # use_wandb=True,
-                # wandb_project="thesis_dss_autoencoder",
-                # wandb_name=f"sweep_run_{wandb.run.id}"
-            # )
-            args = CBDNetArgs(
-                trainset=train_dataset,
-                testset=test_dataset,
-                holdoutData=getHoldoutData(test_dataset),
-                original_shape=orig_shape,
-                padding=padding,
-                lr=config.lr,
-                batch_size=config.batch_size,
-                use_wandb=True,
-                wandb_project="thesis_dss_autoencoder",
-                wandb_name=f"sweep_run_{wandb.run.id}"
+    #         # Here you can override specific arguments from the sweep
+    #         # args = AutoencoderArgs(
+    #             # trainset=train_dataset,
+    #             # testset=test_dataset,
+    #             # holdoutData=getHoldoutData(test_dataset),
+    #             # original_shape=orig_shape,
+    #             # padding=padding,
+    #             # latent_dim_size=config.latent_dim_size,
+    #             # hidden_dim_size=config.hidden_dim_size,
+    #             # lr=config.lr,
+    #             # batch_size=config.batch_size,
+    #             # use_wandb=True,
+    #             # wandb_project="thesis_dss_autoencoder",
+    #             # wandb_name=f"sweep_run_{wandb.run.id}"
+    #         # )
+    #         args = CBDNetArgs(
+    #             trainset=train_dataset,
+    #             testset=test_dataset,
+    #             holdoutData=getHoldoutData(test_dataset),
+    #             original_shape=orig_shape,
+    #             padding=padding,
+    #             lr=config.lr,
+    #             batch_size=config.batch_size,
+    #             use_wandb=True,
+    #             wandb_project="thesis_dss_autoencoder",
+    #             wandb_name=f"sweep_run_{wandb.run.id}"
 
-            )
+    #         )
 
-            trainer = CBDNetTrainer(args=args, device = "cuda" if torch.cuda.is_available() else ("mps" if torch.backends.mps.is_available() else "cpu"))
-            trainer.train()
-    sweep_train()
-
-
+    #         trainer = CBDNetTrainer(args=args, device = "cuda" if torch.cuda.is_available() else ("mps" if torch.backends.mps.is_available() else "cpu"))
+    #         trainer.train()
+    # sweep_train()
 
 
 
-    # args_trainer = AutoencoderArgs(trainset=train_dataset, testset=test_dataset, holdoutData=getHoldoutData(test_dataset), original_shape=orig_shape, padding=padding,
-    #                                 use_wandb=False)
+
+
+
+    args_trainer = AutoencoderArgs(trainset=train_dataset, testset=test_dataset, holdoutData=holdout_data, original_shape=orig_shape, padding=padding,
+                                    use_wandb=True)
     # args_trainer = PRIDNetArgs(trainset=train_dataset, testset=test_dataset, holdoutData=getHoldoutData(test_dataset), original_shape=orig_shape, padding=padding,
     #                                 use_wandb=False)
 
@@ -565,3 +567,5 @@ if __name__ == '__main__':
 
 
 
+
+# %%

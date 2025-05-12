@@ -100,6 +100,9 @@ def reconstructFromPatches(patches: Tensor, original_shape: tuple, padding: tupl
         reconstructed: (frames, h ,w)
     """
     n, num_patches, ph, pw = patches.shape
+    if num_patches ==1:
+        patches = patches.transpose(1,0)
+        n, num_patches, ph, pw = patches.shape
     _, h_orig, w_orig = original_shape
     padh1, padh2, padw1, padw2 = padding
 
