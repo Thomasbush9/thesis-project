@@ -418,9 +418,9 @@ class PRIDNetTrainer():
         self.step += imgs.shape[0]
 
         if self.args.use_wandb:
-           wandb.log(dict(loss=loss, 
+           wandb.log(dict(loss=loss,
                           rec=loss_rec, ssim=loss_ssim), step=self.step)
-        
+
         return loss, loss_rec, loss_ssim
     @t.inference_mode()
     def log_samples(self)->None:
@@ -473,7 +473,7 @@ class PRIDNetTrainer():
             wandb.finish()
 
         return self.model
-        
+
 
 
 if __name__ == '__main__':
@@ -490,7 +490,7 @@ if __name__ == '__main__':
     else:
         data_path = '/Users/thomasbush/Documents/DSS_Tilburg/data/keyframes/_2025-04-22 00:25:47.432414_keyframes.pth'
 
-    
+
 
 
     data = torch.load(data_path, map_location='cpu', weights_only=False)
@@ -552,11 +552,11 @@ if __name__ == '__main__':
 
 
 
-    
 
 
-    
- 
+
+
+
 
 
 

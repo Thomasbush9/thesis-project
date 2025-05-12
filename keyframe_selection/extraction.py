@@ -1,12 +1,12 @@
 from utils import loadVideoArray
-import torch 
+import torch
 from torchvision.models import resnet50, ResNet50_Weights
 from sklearn.cluster import KMeans
 import torchvision.transforms as T
 from sklearn.metrics import pairwise_distances_argmin_min
 import numpy as np
 from sklearn.decomposition import PCA
-from tqdm import tqdm 
+from tqdm import tqdm
 from pathlib import Path
 import argparse
 from torchinfo import summary
@@ -24,15 +24,15 @@ class CustomDataset(Dataset):
 
     def __len__(self):
         return self.frames.shape[0]
-    
+
     def __getitem__(self, idx):
         img = self.frames[idx]  # shape: [H, W]
-        
+
         # Convert grayscale -> RGB by repeating across 3 channels
         img_rgb = np.stack([img] * 3, axis=-1)  # shape: [H, W, 3]
-        
+
         img_pil = Image.fromarray(img_rgb.astype(np.uint8))
-        
+
         if self.transform:
             img = self.transform(img_pil)
         return img
@@ -58,19 +58,19 @@ if __name__ == "__main__":
     preprocess_custom = T.Compose([
     T.ToTensor(),
     T.Resize((224, 224)),  # OR use T.Resize with aspect ratio preservation + padding
-    T.Normalize(mean=[0.485, 0.456, 0.406],  
+    T.Normalize(mean=[0.485, 0.456, 0.406],
                 std=[0.229, 0.224, 0.225])
     ])
 # === features extraction ===
     weights = ResNet50_Weights.DEFAULT
     preprocess = weights.transforms()
     model = resnet50(weights= weights)
-    model = torch.nn.Sequential(*list(model.children())[:-1]).to(device)  
-    print("Model Initialised, Model Summary:") 
+    model = torch.nn.Sequential(*list(model.children())[:-1]).to(device)
+    print("Model Initialised, Model Summary:")
     summary(model, (1,3, 224, 224), device=device)
     model.eval()  # important!
-    
-    
+
+
     img_dataset = CustomDataset(video_array, transform=preprocess)
     data_loader = DataLoader(img_dataset, batch_size=32, shuffle=True)
     features = []
@@ -82,7 +82,7 @@ if __name__ == "__main__":
 
     features = [img.to('cpu') for img in features]
     f = np.concatenate(features)
-    features_np = f.mean(axis=(2, 3)) 
+    features_np = f.mean(axis=(2, 3))
 
     print("PCA running ")
     pca = PCA(n_components = .9)
@@ -105,7 +105,7 @@ if __name__ == "__main__":
         }, save_path / f"_{datetime.now()}_keyframes.pth")
 
 
-    
 
 
-    
+
+
