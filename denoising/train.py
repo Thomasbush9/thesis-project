@@ -18,6 +18,7 @@ from torchvision.utils import make_grid
 import matplotlib.pyplot as plt
 from piqa import SSIM
 from typing import Literal
+import torchvision.transforms.functional as TF
 
 # ==== classes data and loss ===
 class CustomDataset(Dataset):
@@ -126,7 +127,7 @@ def buildDatasetFromTensor(input:Tensor, dim:int, train_ratio:float=.8)->tuple:
 
     tot_patches = einops.rearrange(patches_frames, 'f p h w -> (f p ) 1 h w', h=dim, w=dim).type(torch.float)
     holdout_data = tot_patches[:40]
-    
+
     dataset = CustomDataset(tot_patches[40:])
 
     # Split into train/test
@@ -217,22 +218,22 @@ class AutoencoderTrainer:
         output_patches = self.model(self.HOLDOUT_DATA.to(self.device)).cpu()
         original_patches = self.HOLDOUT_DATA.cpu()
 
-        original_patches = original_patches.squeeze(1).unsqueeze(0)
-        output_patches = output_patches.squeeze(1).unsqueeze(0)
+        # original_patches = original_patches.squeeze(1).unsqueeze(0)
+        # output_patches = output_patches.squeeze(1).unsqueeze(0)
 
         # Reconstruct full images
         reconstructed_img = reconstructFromPatches(output_patches, self.args.original_shape, self.args.padding)
         original_img = reconstructFromPatches(original_patches, self.args.original_shape, self.args.padding)
 
         # Combine vertically
-        comparison = torch.cat([original_img, reconstructed_img], dim=1)  # shape: (1, H*2, W)
+        # comparison = torch.cat([original_img, reconstructed_img], dim=1)  # shape: (1, H*2, W)
 
-        # Make into grid image and send to WandB
-        img_grid = make_grid(comparison, normalize=True, scale_each=True)
+        # # Make into grid image and send to WandB
+        # img_grid = make_grid(comparison, normalize=True, scale_each=True)
         if self.args.use_wandb:
-            wandb.log({"reconstruction": wandb.Image(img_grid)}, step=self.step)
+            wandb.log({"reconstruction": wandb.Image(TF.to_pil_image(reconstructed_img)),"original":wandb.Image(TF.to_pil_image(original_img))}, step=self.step)
         else:
-            plt.imshow(make_grid(img_grid).permute(1, 2, 0))
+            plt.imshow(TF.to_pil_image(reconstructed_img), cmap='gray')
 
     def train(self) -> AutoEncoder:
         """Performs a full training run."""
@@ -330,23 +331,13 @@ class CBDNetTrainer():
 
         self.model.eval()
         output_patches = self.model(self.HOLDOUT_DATA.to(self.device))[0].detach().cpu()
-        output_patches = output_patches.cpu()
-        original_patches = self.HOLDOUT_DATA.cpu()
 
-        original_patches = original_patches.squeeze(1).unsqueeze(0)
-        output_patches = output_patches.squeeze(1).unsqueeze(0)
+        # we generate the original images:
+        rec_from_patches = reconstructFromPatches(output_patches,orig_shape, padding)
+        origina_img = reconstructFromPatches(self.HOLDOUT_DATA.cpu(), orig_shape, padding)
 
-        # Reconstruct full images
-        reconstructed_img = reconstructFromPatches(output_patches, self.args.original_shape, self.args.padding)
-        original_img = reconstructFromPatches(original_patches, self.args.original_shape, self.args.padding)
-
-        # Combine vertically
-        comparison = torch.cat([original_img, reconstructed_img], dim=1)  # shape: (1, H*2, W)
-
-        # Make into grid image and send to WandB
-        img_grid = make_grid(comparison, normalize=True, scale_each=True)
         if self.args.use_wandb:
-            wandb.log({"reconstruction": wandb.Image(img_grid)}, step=self.step)
+            wandb.log({"reconstruction": wandb.Image(TF.to_pil_image(rec_from_patches)), "original":wandb.Image(TF.to_pil_image(origina_img))}, step=self.step)
 
 
     def train(self)->CBDNet:
@@ -489,7 +480,7 @@ if __name__ == '__main__':
     if args.data_path:
         data_path = args.data_path
     else:
-        data_path = '/Users/thomasbush/Documents/DSS_Tilburg/data/keyframes/_2025-04-22 00:25:47.432414_keyframes.pth'
+        data_path = '/Users/thomasbush/Documents/Vault/DSS_Tilburg/data/keyframes/_2025-04-22 00:25:47.432414_keyframes.pth'
 
 
 
@@ -500,72 +491,57 @@ if __name__ == '__main__':
     idx = data['keyframe_idx']
 
     train_dataset, test_dataset, orig_shape, padding, holdout_data = buildDatasetFromTensor(keyframes, dim=64)
-    # def sweep_train(config=None):
-    #     with wandb.init(config=config):
-    #         config = wandb.config
+    def sweep_train(config=None):
+        with wandb.init(config=config):
+            config = wandb.config
 
-    #         # Here you can override specific arguments from the sweep
-    #         # args = AutoencoderArgs(
-    #             # trainset=train_dataset,
-    #             # testset=test_dataset,
-    #             # holdoutData=getHoldoutData(test_dataset),
-    #             # original_shape=orig_shape,
-    #             # padding=padding,
-    #             # latent_dim_size=config.latent_dim_size,
-    #             # hidden_dim_size=config.hidden_dim_size,
-    #             # lr=config.lr,
-    #             # batch_size=config.batch_size,
-    #             # use_wandb=True,
-    #             # wandb_project="thesis_dss_autoencoder",
-    #             # wandb_name=f"sweep_run_{wandb.run.id}"
-    #         # )
-    #         args = CBDNetArgs(
-    #             trainset=train_dataset,
-    #             testset=test_dataset,
-    #             holdoutData=getHoldoutData(test_dataset),
-    #             original_shape=orig_shape,
-    #             padding=padding,
-    #             lr=config.lr,
-    #             batch_size=config.batch_size,
-    #             use_wandb=True,
-    #             wandb_project="thesis_dss_autoencoder",
-    #             wandb_name=f"sweep_run_{wandb.run.id}"
+            # Here you can override specific arguments from the sweep
+            # args = AutoencoderArgs(
+                # trainset=train_dataset,
+                # testset=test_dataset,
+                # holdoutData=getHoldoutData(test_dataset),
+                # original_shape=orig_shape,
+                # padding=padding,
+                # latent_dim_size=config.latent_dim_size,
+                # hidden_dim_size=config.hidden_dim_size,
+                # lr=config.lr,
+                # batch_size=config.batch_size,
+                # use_wandb=True,
+                # wandb_project="thesis_dss_autoencoder",
+                # wandb_name=f"sweep_run_{wandb.run.id}"
+            # )
+            args = CBDNetArgs(
+                trainset=train_dataset,
+                testset=test_dataset,
+                holdoutData=holdout_data,
+                original_shape=orig_shape,
+                padding=padding,
+                lr=config.lr,
+                batch_size=config.batch_size,
+                use_wandb=True,
+                wandb_project="thesis_dss_autoencoder",
+                wandb_name=f"sweep_run_{wandb.run.id}"
 
-    #         )
+            )
 
-    #         trainer = CBDNetTrainer(args=args, device = "cuda" if torch.cuda.is_available() else ("mps" if torch.backends.mps.is_available() else "cpu"))
-    #         trainer.train()
-    # sweep_train()
-
-
+            trainer = CBDNetTrainer(args=args, device = "cuda" if torch.cuda.is_available() else ("mps" if torch.backends.mps.is_available() else "cpu"))
+            trainer.train()
+    sweep_train()
 
 
 
 
-    args_trainer = AutoencoderArgs(trainset=train_dataset, testset=test_dataset, holdoutData=holdout_data, original_shape=orig_shape, padding=padding,
-                                    use_wandb=True)
+
+
+    # args_trainer = AutoencoderArgs(trainset=train_dataset, testset=test_dataset, holdoutData=holdout_data, original_shape=orig_shape, padding=padding,
+    #                                 use_wandb=False)
     # args_trainer = PRIDNetArgs(trainset=train_dataset, testset=test_dataset, holdoutData=getHoldoutData(test_dataset), original_shape=orig_shape, padding=padding,
     #                                 use_wandb=False)
 
 # === Start Trainign ===
 
     # trainer = AutoencoderTrainer(args_trainer, device='mps') if args.m == "AE"  else CBDNetTrainer(args_trainer, device='mps')
-    # trainer = PRIDNetTrainer(args_trainer, device='mps')
+    # trainer = CBDNetTrainer(args_trainer, device='mps')
+    # trainer.train()
+    #
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-# %%
