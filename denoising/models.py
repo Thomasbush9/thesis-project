@@ -158,9 +158,9 @@ class CBDNet(nn.Module):
         up2 = self.up2_conv(up2)
 
         out = self.output_conv(up2)
-        final = out + x  # residual connection
-
-        return final, noise_map
+        # final = out + x  # residual connection
+        #
+        return out, noise_map
 
 
 

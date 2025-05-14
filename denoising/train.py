@@ -233,6 +233,7 @@ class AutoencoderTrainer:
         if self.args.use_wandb:
             wandb.log({"reconstruction": wandb.Image(TF.to_pil_image(reconstructed_img)),"original":wandb.Image(TF.to_pil_image(original_img))}, step=self.step)
         else:
+
             plt.imshow(TF.to_pil_image(reconstructed_img), cmap='gray')
 
     def train(self) -> AutoEncoder:
@@ -251,7 +252,7 @@ class AutoencoderTrainer:
                 # noisy = imgs + 0.1 * torch.randn_like(imgs)
                 # noisy = noisy.clamp(0, 1)
                 # noisy = addPoissoinGaussiaNoise(imgs)
-                noisy = addRealisticNoise(imgs, sigma_s=0.1, sigma_c=0.05)
+                noisy = addRealisticNoise(imgs)
                 loss, loss_ssim, loss_mse = self.training_step(noisy,imgs)
                 progress_bar.set_description(f"{epoch=:02d}, {loss=:.4f}, MSE:{loss_mse:.4f}, SSIM:{loss_ssim:.4f} step={self.step:05d}")
                 # log every 250 steps
@@ -334,10 +335,26 @@ class CBDNetTrainer():
 
         # we generate the original images:
         rec_from_patches = reconstructFromPatches(output_patches,orig_shape, padding)
-        origina_img = reconstructFromPatches(self.HOLDOUT_DATA.cpu(), orig_shape, padding)
+        original_img = reconstructFromPatches(self.HOLDOUT_DATA.cpu(), orig_shape, padding)
+
+        rec_from_patches = torch.clamp(rec_from_patches, 0, 1.0)
+        original_img= torch.clamp(original_img, 0, 1.0)
 
         if self.args.use_wandb:
-            wandb.log({"reconstruction": wandb.Image(TF.to_pil_image(rec_from_patches)), "original":wandb.Image(TF.to_pil_image(origina_img))}, step=self.step)
+            wandb.log({"reconstruction": wandb.Image(TF.to_pil_image(rec_from_patches)), "original":wandb.Image(TF.to_pil_image(original_img))}, step=self.step)
+        else:
+            fig, axs = plt.subplots(1,2)
+            #plot the original
+            axs[0].imshow(TF.to_pil_image(original_img),cmap='gray')
+            axs[0].set_title('Original')
+            axs[0].axis('Off')
+
+            #show rec img:
+            axs[1].imshow(TF.to_pil_image(rec_from_patches), cmap='gray')
+            axs[1].set_title('Reconstructed')
+            axs[1].axis('Off')
+            plt.savefig(f'/Users/thomasbush/Documents/Vault/DSS_Tilburg/data/plots_denoising/{self.step}')
+            plt.close()
 
 
     def train(self)->CBDNet:
@@ -353,7 +370,7 @@ class CBDNetTrainer():
 
             for imgs in progress_bar:
                 imgs = imgs.to(self.device)
-                noisy = addRealisticNoise(imgs, sigma_s=0.08, sigma_c=0.02)
+                noisy = addRealisticNoise(imgs)
                 loss, loss_mse, loss_ssim = self.training_step(imgs, noisy)
                 progress_bar.set_description(f"{epoch=:02d}, Loss: {loss=:.4f},  MSE:{loss_mse:.4f}, SSIM:{loss_ssim:.4f} step={self.step:05d}")
                 # log every 250 steps
@@ -526,22 +543,22 @@ if __name__ == '__main__':
 
             trainer = CBDNetTrainer(args=args, device = "cuda" if torch.cuda.is_available() else ("mps" if torch.backends.mps.is_available() else "cpu"))
             trainer.train()
-    sweep_train()
+    # sweep_train()
+    #
 
 
 
 
 
-
-    # args_trainer = AutoencoderArgs(trainset=train_dataset, testset=test_dataset, holdoutData=holdout_data, original_shape=orig_shape, padding=padding,
-    #                                 use_wandb=False)
+    args_trainer = AutoencoderArgs(trainset=train_dataset, testset=test_dataset, holdoutData=holdout_data, original_shape=orig_shape, padding=padding,
+                                    use_wandb=False)
     # args_trainer = PRIDNetArgs(trainset=train_dataset, testset=test_dataset, holdoutData=getHoldoutData(test_dataset), original_shape=orig_shape, padding=padding,
-    #                                 use_wandb=False)
+    # #                                 use_wandb=False)
 
 # === Start Trainign ===
 
     # trainer = AutoencoderTrainer(args_trainer, device='mps') if args.m == "AE"  else CBDNetTrainer(args_trainer, device='mps')
-    # trainer = CBDNetTrainer(args_trainer, device='mps')
-    # trainer.train()
+    trainer = CBDNetTrainer(args_trainer, device='mps')
+    trainer.train()
     #
 
