@@ -67,7 +67,7 @@ class AutoEncoder(nn.Module):
 class CBDNet(nn.Module):
     def __init__(self):
         super().__init__()
-
+        self.apply(weights_init)
         # ==== Noise Estimator ====
         self.noise_estimator = nn.Sequential(
             Conv2d(1, 32, kernel_size=3, padding=1),
@@ -85,34 +85,45 @@ class CBDNet(nn.Module):
         # === Encoder ===
         self.conv1 = nn.Sequential(
             Conv2d(2, 64, kernel_size=3, padding=1),
+            BatchNorm2d(64),
             ReLU(),
             Conv2d(64, 64, kernel_size=3, padding=1),
+            BatchNorm2d(64),
             ReLU(),
         )
         self.pool1 = AvgPool2d(kernel_size=2, stride=2, padding=0)
 
         self.conv2 = nn.Sequential(
             Conv2d(64, 128, kernel_size=3, padding=1),
+            BatchNorm2d(128),
             ReLU(),
             Conv2d(128, 128, kernel_size=3, padding=1),
+            BatchNorm2d(128),
             ReLU(),
             Conv2d(128, 128, kernel_size=3, padding=1),
+            BatchNorm2d(128),
             ReLU()
         )
         self.pool2 = AvgPool2d(kernel_size=2, stride=2, padding=0)
 
         self.conv3 = nn.Sequential(
             Conv2d(128, 256, kernel_size=3, padding=1),
+            BatchNorm2d(256),
             ReLU(),
             Conv2d(256, 256, kernel_size=3, padding=1),
+            BatchNorm2d(256),
             ReLU(),
             Conv2d(256, 256, kernel_size=3, padding=1),
+            BatchNorm2d(256),
             ReLU(),
             Conv2d(256, 256, kernel_size=3, padding=1),
+            BatchNorm2d(256),
             ReLU(),
             Conv2d(256, 256, kernel_size=3, padding=1),
+            BatchNorm2d(256),
             ReLU(),
             Conv2d(256, 256, kernel_size=3, padding=1),
+            BatchNorm2d(256),
             ReLU()
         )
 
@@ -120,18 +131,23 @@ class CBDNet(nn.Module):
         self.up1 = nn.ConvTranspose2d(256, 128, kernel_size=3, stride=2, padding=1, output_padding=1)
         self.up1_conv = nn.Sequential(
             Conv2d(128, 128, kernel_size=3, padding=1),
+            BatchNorm2d(128),
             ReLU(),
             Conv2d(128, 128, kernel_size=3, padding=1),
+            BatchNorm2d(128),
             ReLU(),
             Conv2d(128, 128, kernel_size=3, padding=1),
+            BatchNorm2d(128),
             ReLU()
         )
 
         self.up2 = nn.ConvTranspose2d(128, 64, kernel_size=3, stride=2, padding=1, output_padding=1)
         self.up2_conv = nn.Sequential(
             Conv2d(64, 64, kernel_size=3, padding=1),
+            BatchNorm2d(64),
             ReLU(),
             Conv2d(64, 64, kernel_size=3, padding=1),
+            BatchNorm2d(64),
             ReLU()
         )
 
@@ -158,8 +174,7 @@ class CBDNet(nn.Module):
         up2 = self.up2_conv(up2)
 
         out = self.output_conv(up2)
-        # final = out + x  # residual connection
-        #
+        final = x + t.tanh(out) * .1
         return out, noise_map
 
 

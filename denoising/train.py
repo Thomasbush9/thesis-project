@@ -233,8 +233,18 @@ class AutoencoderTrainer:
         if self.args.use_wandb:
             wandb.log({"reconstruction": wandb.Image(TF.to_pil_image(reconstructed_img)),"original":wandb.Image(TF.to_pil_image(original_img))}, step=self.step)
         else:
+            fig, axs = plt.subplots(1,2)
+            #plot the original
+            axs[0].imshow(TF.to_pil_image(original_img),cmap='gray')
+            axs[0].set_title('Original')
+            axs[0].axis('Off')
 
-            plt.imshow(TF.to_pil_image(reconstructed_img), cmap='gray')
+            #show rec img:
+            axs[1].imshow(TF.to_pil_image(reconstructed_img), cmap='gray')
+            axs[1].set_title('Reconstructed')
+            axs[1].axis('Off')
+            plt.savefig(f'/Users/thomasbush/Documents/Vault/DSS_Tilburg/data/plots_denoising/{self.step}')
+            plt.close()
 
     def train(self) -> AutoEncoder:
         """Performs a full training run."""
@@ -316,7 +326,6 @@ class CBDNetTrainer():
         assert not torch.isinf(loss), f"Loss is Inf at step {self.step}"
 
         loss.backward()
-        torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
         self.optimizer.step()
         self.optimizer.zero_grad()
         self.step += imgs.shape[0]
@@ -343,6 +352,7 @@ class CBDNetTrainer():
         if self.args.use_wandb:
             wandb.log({"reconstruction": wandb.Image(TF.to_pil_image(rec_from_patches)), "original":wandb.Image(TF.to_pil_image(original_img))}, step=self.step)
         else:
+        #     print("Reconstruction min/max:", rec_from_patches.min().item(), rec_from_patches.max().item())
             fig, axs = plt.subplots(1,2)
             #plot the original
             axs[0].imshow(TF.to_pil_image(original_img),cmap='gray')
