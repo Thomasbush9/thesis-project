@@ -136,3 +136,8 @@ To evaluate their performance we can follow the following steps:
 4. Once we have obtained the 3D data we can calculate: speed outliers, reprojection loss
 
 
+### Quick notes on CBDNet training:
+
+- send holdout data not changed, noisy and denoised for plotting
+- change config file for the training sweep
+

@@ -1,4 +1,5 @@
 #%%
+#from numpy.lib.polynomial import _5Tup
 import wandb
 import torch as t
 from torch.utils.data import DataLoader, Dataset, Subset
@@ -282,6 +283,7 @@ class CBDNetArgs:
     holdoutData: Tensor
     original_shape:tuple
     padding:tuple
+    ssim_weights:float
 
     # data / training
     batch_size: int = 32
@@ -308,6 +310,9 @@ class CBDNetTrainer():
         self.ssim = SSIMLoss().to(self.device)
         self.loss_rec = nn.MSELoss()
         self.optimizer = t.optim.Adam(self.model.parameters(), lr=self.args.lr, betas=self.args.betas)
+        self.ssim_weights = args.ssim_weights
+        self.orig_shape = args.original_shape
+        self.padding = args.padding
 #TODO change loss with SSIM
     def training_step(self, imgs: Tensor, noisy_imgs: Tensor):
         self.model.train()
@@ -320,7 +325,7 @@ class CBDNetTrainer():
 
         loss_ssim = self.ssim(pred_img, imgs)
         loss_mse = self.loss_rec(pred_img, imgs)
-        loss = loss_mse + loss_ssim
+        loss = loss_mse + self.ssim_weights * loss_ssim
 
         assert not torch.isnan(loss), f"Loss is NaN at step {self.step}"
         assert not torch.isinf(loss), f"Loss is Inf at step {self.step}"
@@ -340,20 +345,26 @@ class CBDNetTrainer():
         assert self.step > 0, "Call after training step."
 
         self.model.eval()
-        output_patches = self.model(self.HOLDOUT_DATA.to(self.device))[0].detach().cpu()
+        noisy = addRealisticNoise(self.HOLDOUT_DATA).to(self.device)
+        out, noise_map = self.model(noisy)
+        output_patches = out.detach().cpu()
 
         # we generate the original images:
-        rec_from_patches = reconstructFromPatches(output_patches,orig_shape, padding)
-        original_img = reconstructFromPatches(self.HOLDOUT_DATA.cpu(), orig_shape, padding)
+        rec_from_patches = reconstructFromPatches(output_patches,self.orig_shape, self.padding)
+        original_img = reconstructFromPatches(self.HOLDOUT_DATA.cpu(), self.orig_shape, self.padding)
+        noisy_img = reconstructFromPatches(noisy.cpu(), self.orig_shape, self.padding)
 
         rec_from_patches = torch.clamp(rec_from_patches, 0, 1.0)
         original_img= torch.clamp(original_img, 0, 1.0)
-
         if self.args.use_wandb:
-            wandb.log({"reconstruction": wandb.Image(TF.to_pil_image(rec_from_patches)), "original":wandb.Image(TF.to_pil_image(original_img))}, step=self.step)
+           wandb.log({
+            "reconstruction": wandb.Image(TF.to_pil_image(rec_from_patches)),
+            "noisy": wandb.Image(TF.to_pil_image(noisy_img)),
+            "original": wandb.Image(TF.to_pil_image(original_img))
+            }, step=self.step)
         else:
         #     print("Reconstruction min/max:", rec_from_patches.min().item(), rec_from_patches.max().item())
-            fig, axs = plt.subplots(1,2)
+            fig, axs = plt.subplots(1,3)
             #plot the original
             axs[0].imshow(TF.to_pil_image(original_img),cmap='gray')
             axs[0].set_title('Original')
@@ -363,6 +374,10 @@ class CBDNetTrainer():
             axs[1].imshow(TF.to_pil_image(rec_from_patches), cmap='gray')
             axs[1].set_title('Reconstructed')
             axs[1].axis('Off')
+
+            axs[2].imshow(TF.to_pil_image(noisy_img), cmap='gray')
+            axs[2].set_title('noisy image')
+            axs[2].axis('Off')
             plt.savefig(f'/Users/thomasbush/Documents/Vault/DSS_Tilburg/data/plots_denoising/{self.step}')
             plt.close()
 
@@ -544,31 +559,45 @@ if __name__ == '__main__':
                 original_shape=orig_shape,
                 padding=padding,
                 lr=config.lr,
+                ssim_weights=config.ssim_weight,
                 batch_size=config.batch_size,
                 use_wandb=True,
-                wandb_project="thesis_dss_autoencoder",
+                wandb_project="thesis-cbdnet",
                 wandb_name=f"sweep_run_{wandb.run.id}"
 
             )
 
             trainer = CBDNetTrainer(args=args, device = "cuda" if torch.cuda.is_available() else ("mps" if torch.backends.mps.is_available() else "cpu"))
             trainer.train()
-    # sweep_train()
-    #
+    sweep_train()
+    # #
+    # args = CBDNetArgs(
+    #         trainset = train_dataset,
+    #         testset = test_dataset,
+    #         holdoutData = holdout_data,
+    #         original_shape = orig_shape,
+    #         padding= padding,
+    #         ssim_weights = .5,
+    #         use_wandb = False
+    #         )
 
 
 
 
 
-    args_trainer = AutoencoderArgs(trainset=train_dataset, testset=test_dataset, holdoutData=holdout_data, original_shape=orig_shape, padding=padding,
-                                    use_wandb=False)
+
+
+
+
+    # args_trainer = AutoencoderArgs(trainset=train_dataset, testset=test_dataset, holdoutData=holdout_data, original_shape=orig_shape, padding=padding,
+    #                                 use_wandb=False)
     # args_trainer = PRIDNetArgs(trainset=train_dataset, testset=test_dataset, holdoutData=getHoldoutData(test_dataset), original_shape=orig_shape, padding=padding,
     # #                                 use_wandb=False)
 
 # === Start Trainign ===
 
-    # trainer = AutoencoderTrainer(args_trainer, device='mps') if args.m == "AE"  else CBDNetTrainer(args_trainer, device='mps')
-    trainer = CBDNetTrainer(args_trainer, device='mps')
-    trainer.train()
+    # # trainer = AutoencoderTrainer(args_trainer, device='mps') if args.m == "AE"  else CBDNetTrainer(args_trainer, device='mps')
+    # trainer = CBDNetTrainer(args, device='mps')
+    # trainer.train()
     #
 

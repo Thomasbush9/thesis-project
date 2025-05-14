@@ -175,7 +175,7 @@ class CBDNet(nn.Module):
 
         out = self.output_conv(up2)
         final = x + t.tanh(out) * .1
-        return out, noise_map
+        return final, noise_map
 
 
 
