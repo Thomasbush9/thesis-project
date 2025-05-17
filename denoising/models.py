@@ -4,9 +4,11 @@ import numpy as np
 import einops
 from einops.layers.torch import Rearrange
 from torch.nn import Conv2d, ConvTranspose2d, Sequential, ReLU, BatchNorm2d, Linear, Sigmoid, AvgPool2d, AdaptiveAvgPool2d
-from torch import Tensor, nn
+from torch import Tensor, batch_norm, nn, relu
 from torch.nn.functional import interpolate, unfold
 import torch.nn.functional as F
+from torch.utils.checkpoint import detach_variable
+
 from utils import generatePatches
 import math
 from einops import rearrange
@@ -425,5 +427,55 @@ class PRIDNet(nn.Module):
         return out
 
 
+# === PRIDLite Model===
 
+class PRIDLite(nn.Module):
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
 
+        self.encoder = Sequential(
+                Conv2d(in_channels=1, out_channels=32, kernel_size=3, padding=1),
+                ReLU(),
+                Conv2d(32, 64, 3, padding=1),
+                ReLU(),
+                nn.MaxPool2d(2)
+                )
+        self.local_attention = LocalContextAttention(in_channels=64, kernel_size=7)
+        self.decoder = Sequential(
+                nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False),
+                Conv2d(64, 32, 3, padding=1),
+                ReLU(),
+                Conv2d(32, 1, 3, padding=1)
+                )
+    def forward(self, x:Tensor)-> Tensor:
+        x = self.encoder(x)
+        x = self.local_attention(x)
+        x = self.decoder(x)
+        return x
+
+# === test it ===
+# from train import buildDatasetFromTensor
+# data_path = '/Users/thomasbush/Documents/Vault/DSS_Tilburg/data/keyframes/_2025-04-22 00:25:47.432414_keyframes.pth'
+#
+#
+#
+# device = 'mps'
+# data = t.load(data_path, map_location='cpu', weights_only=False)
+# keyframes = data['keyframes']
+# keyframes = keyframes / 255.0  # shape: (frames, H, W)
+# idx = data['keyframe_idx']
+#
+# print(keyframes.shape)
+#
+# model = PRIDLite().to(device)
+# train_dataset, test_dataset, original_shape, padding, _ = buildDatasetFromTensor(keyframes, dim=64)
+# print('dataset created')
+#
+#
+# trainloader = t.utils.data.DataLoader(train_dataset, batch_size=32, shuffle=True)
+# sample = next(iter(trainloader)).to(device)
+#
+# print('batch:', sample.shape)
+#
+# out = model.forward(sample)
+# print('forward completed:', out.shape)

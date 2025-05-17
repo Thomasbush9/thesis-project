@@ -141,3 +141,27 @@ To evaluate their performance we can follow the following steps:
 - send holdout data not changed, noisy and denoised for plotting
 - change config file for the training sweep
 
+### PRID Net alternatives and modifications:
+
+
+1. Replace the UNET module with a shared one, that we could scale
+2. Add global self attention:
+3. Modify the fusion module: gated mech?
+
+
+### Additional Empirical Loss:
+
+We have to add a loss that actually quantifies how much better each denoising method does in terms of our pipeline for reconstruct postural data.
+
+
+Ideas for empirical loss (viz): we extract 1000 of a video, run denoising and save results for each model, Then we compare the results, run the 2D tracking from SLEAP and 3D from anipose. Finally we can compute the usual metrics. (I would use anipose non-optimised in the first place).
+
+---
+
+**TO-DO**:
+
+[]Finish training PRIDNet (hypertuning + selection and save all models)
+[]Extract 1k frame video
+[]run denoising: 4 vids total
+[]Run pipeline (2d tracking and 3d rec)
+[]Evaluate with figures and plots

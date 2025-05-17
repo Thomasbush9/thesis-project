@@ -10,7 +10,7 @@ from torch import Tensor
 import numpy as np
 import argparse
 import torch.nn as nn
-from models import AutoEncoder, CBDNet, PRIDNet
+from models import AutoEncoder, CBDNet, PRIDNet, PRIDLite
 import torch
 import einops
 from torch.utils.data import random_split
@@ -510,6 +510,123 @@ class PRIDNetTrainer():
 
         return self.model
 
+# === prid lite trainer ===
+@dataclass
+class PRIDLietArgs:
+    trainset: Dataset
+    testset: Dataset
+    holdoutData: Tensor
+    original_shape:tuple
+    padding:tuple
+
+    # data / training
+    batch_size: int = 32
+    epochs: int = 5
+    lr: float = 1e-3
+    betas: tuple[float, float] = (0.5, 0.999)
+
+    # logging
+    use_wandb: bool = False
+    wandb_project: str | None = "thesis_dss_pridlite"
+    wandb_name: str | None = None
+    log_every_n_steps: int = 250
+
+
+class PRIDLiteTrainer:
+    def __init__(self, args: PRIDLietArgs, device:Literal['cpu', 'mps']):
+        self.args = args
+        self.device = device
+        self.trainset = args.trainset
+        self.HOLDOUT_DATA = args.holdoutData
+        self.trainloader = DataLoader(self.trainset, batch_size=args.batch_size, shuffle=True)
+        self.model = PRIDLite().to(self.device)
+        self.optimizer = t.optim.Adam(self.model.parameters(), lr=args.lr, betas=args.betas)
+        self.step = 0
+        self.loss_mse = nn.MSELoss()
+        self.loss_ssim = SSIMLoss().to(self.device)
+
+    def training_step(self, noisy:Tensor ,original: Tensor) -> Tensor:
+        """
+        Performs a training step on the batch of images in `img`. Returns the loss. Logs to wandb if enabled.
+        """
+        pred = self.model.forward(noisy)
+        pred1 = torch.clamp(pred, 0.0, 1.0)
+        loss_ssim = self.loss_ssim(pred1, original)
+        loss_mse = self.loss_mse(pred, original)
+        loss = loss_mse + loss_ssim
+        loss.backward()
+        self.optimizer.step()
+        self.optimizer.zero_grad()
+        self.step += original.shape[0]
+
+        if self.args.use_wandb:
+          wandb.log(dict(loss=loss,
+                         SSIM=loss_ssim, MSE=loss_mse), step=self.step)
+
+
+        return loss, loss_ssim, loss_mse
+# TODO: make patches in right order
+    @t.inference_mode()
+    def log_samples(self) -> None:
+        assert self.step > 0, "Call after training step."
+
+        self.model.eval()
+        output_patches = self.model(self.HOLDOUT_DATA.to(self.device)).cpu()
+        original_patches = self.HOLDOUT_DATA.cpu()
+
+        # original_patches = original_patches.squeeze(1).unsqueeze(0)
+        # output_patches = output_patches.squeeze(1).unsqueeze(0)
+
+        # Reconstruct full images
+        reconstructed_img = reconstructFromPatches(output_patches, self.args.original_shape, self.args.padding)
+        original_img = reconstructFromPatches(original_patches, self.args.original_shape, self.args.padding)
+
+        # Combine vertically
+        # comparison = torch.cat([original_img, reconstructed_img], dim=1)  # shape: (1, H*2, W)
+
+        # # Make into grid image and send to WandB
+        # img_grid = make_grid(comparison, normalize=True, scale_each=True)
+        if self.args.use_wandb:
+            wandb.log({"reconstruction": wandb.Image(TF.to_pil_image(reconstructed_img)),"original":wandb.Image(TF.to_pil_image(original_img))}, step=self.step)
+        else:
+            fig, axs = plt.subplots(1,2)
+            #plot the original
+            axs[0].imshow(TF.to_pil_image(original_img),cmap='gray')
+            axs[0].set_title('Original')
+            axs[0].axis('Off')
+
+            #show rec img:
+            axs[1].imshow(TF.to_pil_image(reconstructed_img), cmap='gray')
+            axs[1].set_title('Reconstructed')
+            axs[1].axis('Off')
+            plt.savefig(f'/Users/thomasbush/Documents/Vault/DSS_Tilburg/data/plots_denoising/{self.step}')
+            plt.close()
+
+    def train(self) -> PRIDLite:
+        """Performs a full training run."""
+        self.step = 0
+        if self.args.use_wandb:
+            wandb.init(project=self.args.wandb_project, name=self.args.wandb_name)
+            wandb.watch(self.model)
+
+        for epoch in range(self.args.epochs):
+
+            progress_bar = tqdm(self.trainloader, total=int(len(self.trainloader)), ascii=True)
+
+            for imgs in progress_bar:
+                imgs = imgs.to(self.device)
+                noisy = addRealisticNoise(imgs)
+                loss, loss_ssim, loss_mse = self.training_step(noisy,imgs)
+                progress_bar.set_description(f"{epoch=:02d}, {loss=:.4f}, MSE:{loss_mse:.4f}, SSIM:{loss_ssim:.4f} step={self.step:05d}")
+                # log every 250 steps
+                if self.step % self.args.log_every_n_steps == 0:
+                  self.log_samples()
+
+        if self.args.use_wandb:
+            wandb.finish()
+
+        return self.model, loss
+
 if __name__ == '__main__':
 
     parser = argparse.ArgumentParser(prog="Denoising training")
@@ -569,7 +686,7 @@ if __name__ == '__main__':
 
             trainer = CBDNetTrainer(args=args, device = "cuda" if torch.cuda.is_available() else ("mps" if torch.backends.mps.is_available() else "cpu"))
             trainer.train()
-    sweep_train()
+#    sweep_train()
     # #
     # args = CBDNetArgs(
     #         trainset = train_dataset,
@@ -601,3 +718,13 @@ if __name__ == '__main__':
     # trainer.train()
     #
 
+    args = PRIDLietArgs(
+            trainset=train_dataset,
+            testset=test_dataset,
+            holdoutData= holdout_data,
+            original_shape=orig_shape,
+            padding=padding,
+            use_wandb=False
+            )
+    trainer = PRIDLiteTrainer(args, device='mps')
+    model = trainer.train()

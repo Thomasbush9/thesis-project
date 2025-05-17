@@ -12,8 +12,6 @@ parameters:
   ssim_weight:
     min: 0.05
     max: 0.5
-program: train.py
-command:
   - ${env}
   - python
   - train.py
