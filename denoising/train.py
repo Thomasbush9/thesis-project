@@ -512,7 +512,7 @@ class PRIDNetTrainer():
 
 # === prid lite trainer ===
 @dataclass
-class PRIDLietArgs:
+class PRIDLiteArgs:
     trainset: Dataset
     testset: Dataset
     holdoutData: Tensor
@@ -523,6 +523,7 @@ class PRIDLietArgs:
     batch_size: int = 32
     epochs: int = 5
     lr: float = 1e-3
+    ssim_weight:float = .5
     betas: tuple[float, float] = (0.5, 0.999)
 
     # logging
@@ -533,7 +534,7 @@ class PRIDLietArgs:
 
 
 class PRIDLiteTrainer:
-    def __init__(self, args: PRIDLietArgs, device:Literal['cpu', 'mps']):
+    def __init__(self, args: PRIDLiteArgs, device:Literal['cpu', 'mps']):
         self.args = args
         self.device = device
         self.trainset = args.trainset
@@ -631,7 +632,7 @@ if __name__ == '__main__':
 
     parser = argparse.ArgumentParser(prog="Denoising training")
     parser.add_argument("--data_path", type=str, required=False)
-    parser.add_argument("--m", type=str, choices=["CBDN", "AE", "PR"], required=False)
+    parser.add_argument("--m", type=str, choices=["CBD", "AE", "PRID"], required=False)
 
 
 
@@ -648,45 +649,82 @@ if __name__ == '__main__':
     keyframes = data['keyframes']
     keyframes = keyframes / 255.0  # shape: (frames, H, W)
     idx = data['keyframe_idx']
+    model_type = args.m
 
     train_dataset, test_dataset, orig_shape, padding, holdout_data = buildDatasetFromTensor(keyframes, dim=64)
-    def sweep_train(config=None):
+    def sweep_train(model: Literal['AE', 'CBD', 'PRID'], config=None):
         with wandb.init(config=config):
             config = wandb.config
 
+
+            trainers = {
+                    'AE':AutoencoderTrainer,
+                    'CBD':CBDNetTrainer,
+                    'PRID':PRIDLiteTrainer
+                    }
+            args = {
+                    'AE':AutoencoderArgs,
+                    'CBD':CBDNetArgs,
+                    'PRID':PRIDLiteArgs
+                    }
+            arg = args[model]
+            trainer = trainers[model]
+
+
             # Here you can override specific arguments from the sweep
-            # args = AutoencoderArgs(
-                # trainset=train_dataset,
-                # testset=test_dataset,
-                # holdoutData=getHoldoutData(test_dataset),
-                # original_shape=orig_shape,
-                # padding=padding,
-                # latent_dim_size=config.latent_dim_size,
-                # hidden_dim_size=config.hidden_dim_size,
-                # lr=config.lr,
-                # batch_size=config.batch_size,
-                # use_wandb=True,
-                # wandb_project="thesis_dss_autoencoder",
-                # wandb_name=f"sweep_run_{wandb.run.id}"
-            # )
-            args = CBDNetArgs(
-                trainset=train_dataset,
-                testset=test_dataset,
-                holdoutData=holdout_data,
-                original_shape=orig_shape,
-                padding=padding,
-                lr=config.lr,
-                ssim_weights=config.ssim_weight,
-                batch_size=config.batch_size,
-                use_wandb=True,
-                wandb_project="thesis-cbdnet",
-                wandb_name=f"sweep_run_{wandb.run.id}"
+            if arg == AutoencoderArgs:
 
-            )
+                model_args = AutoencoderArgs(
+                    trainset=train_dataset,
+                    testset=test_dataset,
+                    holdoutData=holdout_data,
+                    original_shape=orig_shape,
+                    padding=padding,
+                    latent_dim_size=config.latent_dim_size,
+                    hidden_dim_size=config.hidden_dim_size,
+                    lr=config.lr,
+                    batch_size=config.batch_size,
+                    use_wandb=True,
+                    wandb_project="thesis_dss_autoencoder",
+                    wandb_name=f"sweep_run_{wandb.run.id}"
+                )
+            elif arg == CBDNetArgs:
 
-            trainer = CBDNetTrainer(args=args, device = "cuda" if torch.cuda.is_available() else ("mps" if torch.backends.mps.is_available() else "cpu"))
+                model_args = CBDNetArgs(
+                    trainset=train_dataset,
+                    testset=test_dataset,
+                    holdoutData=holdout_data,
+                    original_shape=orig_shape,
+                    padding=padding,
+                    lr=config.lr,
+                    ssim_weights=config.ssim_weight,
+                    batch_size=config.batch_size,
+                    use_wandb=True,
+                    wandb_project="thesis-cbdnet",
+                    wandb_name=f"sweep_run_{wandb.run.id}"
+
+                )
+            elif arg == PRIDLiteArgs:
+                model_args = PRIDLiteArgs(
+                    trainset=train_dataset,
+                    testset=test_dataset,
+                    holdoutData=holdout_data,
+                    original_shape=orig_shape,
+                    padding=padding,
+                    lr=config.lr,
+                    ssim_weight = config.ssim_weight,
+                    batch_size=config.batch_size,
+                    use_wandb=True,
+                    wandb_project="thesis_dss_pridnet",
+                    wandb_name=f"sweep_run_{wandb.run.id}"
+                )
+            else:
+                raise ValueError(f"Unhandled argument class for model '{model}'.")
+
+
+            trainer = trainer(args=model_args, device = "cuda" if torch.cuda.is_available() else ("mps" if torch.backends.mps.is_available() else "cpu"))
             trainer.train()
-#    sweep_train()
+    sweep_train(model='PRID')
     # #
     # args = CBDNetArgs(
     #         trainset = train_dataset,
@@ -718,13 +756,13 @@ if __name__ == '__main__':
     # trainer.train()
     #
 
-    args = PRIDLietArgs(
-            trainset=train_dataset,
-            testset=test_dataset,
-            holdoutData= holdout_data,
-            original_shape=orig_shape,
-            padding=padding,
-            use_wandb=False
-            )
-    trainer = PRIDLiteTrainer(args, device='mps')
-    model = trainer.train()
+    # args = PRIDLietArgs(
+    #         trainset=train_dataset,
+    #         testset=test_dataset,
+    #         holdoutData= holdout_data,
+    #         original_shape=orig_shape,
+    #         padding=padding,
+    #         use_wandb=False
+    #         )
+    # trainer = PRIDLiteTrainer(args, device='mps')
+    # model = trainer.train()
