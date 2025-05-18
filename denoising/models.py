@@ -8,7 +8,6 @@ from torch import Tensor, batch_norm, nn, relu
 from torch.nn.functional import interpolate, unfold
 import torch.nn.functional as F
 from torch.utils.checkpoint import detach_variable
-
 from utils import generatePatches
 import math
 from einops import rearrange
@@ -432,6 +431,7 @@ class PRIDNet(nn.Module):
 class PRIDLite(nn.Module):
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
+        self.apply(weights_init)
 
         self.encoder = Sequential(
                 Conv2d(in_channels=1, out_channels=32, kernel_size=3, padding=1),

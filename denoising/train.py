@@ -10,7 +10,7 @@ from torch import Tensor
 import numpy as np
 import argparse
 import torch.nn as nn
-from models import AutoEncoder, CBDNet, PRIDNet, PRIDLite
+from denoising.models import AutoEncoder, CBDNet, PRIDNet, PRIDLite
 import torch
 import einops
 from torch.utils.data import random_split
@@ -532,7 +532,7 @@ class PRIDLiteArgs:
     wandb_name: str | None = None
     log_every_n_steps: int = 250
 
-
+#NOTE check better the results at qualitative level
 class PRIDLiteTrainer:
     def __init__(self, args: PRIDLiteArgs, device:Literal['cpu', 'mps']):
         self.args = args
@@ -553,7 +553,7 @@ class PRIDLiteTrainer:
         pred = self.model.forward(noisy)
         pred1 = torch.clamp(pred, 0.0, 1.0)
         loss_ssim = self.loss_ssim(pred1, original)
-        loss_mse = self.loss_mse(pred, original)
+        loss_mse = self.loss_mse(pred1, original)
         loss = loss_mse + loss_ssim
         loss.backward()
         self.optimizer.step()
@@ -566,7 +566,7 @@ class PRIDLiteTrainer:
 
 
         return loss, loss_ssim, loss_mse
-# TODO: make patches in right order
+
     @t.inference_mode()
     def log_samples(self) -> None:
         assert self.step > 0, "Call after training step."
@@ -766,3 +766,4 @@ if __name__ == '__main__':
     #         )
     # trainer = PRIDLiteTrainer(args, device='mps')
     # model = trainer.train()
+

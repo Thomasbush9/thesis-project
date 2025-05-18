@@ -1,0 +1,5 @@
+---
+Model: PRID
+BatchSize: 16
+Lr: 0.0027
+---
