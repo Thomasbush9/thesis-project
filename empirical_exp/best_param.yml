@@ -3,3 +3,13 @@ Model: PRID
 BatchSize: 16
 Lr: 0.0027
 ---
+Model: AE
+Lr: 0.001
+BatchSize: 64
+Hidden: 128
+Latent: 64
+---
+Model: CBD
+Lr: 0.09237692963556898
+BatchSize: 16
+---

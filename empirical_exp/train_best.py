@@ -3,7 +3,7 @@ import torch
 import os
 from pathlib import Path
 from denoising.train import buildDatasetFromTensor
-from denoising.train import PRIDLiteArgs, PRIDLiteTrainer
+from denoising.train import PRIDLiteArgs, PRIDLiteTrainer, AutoencoderTrainer, AutoencoderArgs, CBDNetArgs, CBDNetTrainer
 import argparse
 from utils.utils import loadVideoArray
 import yaml
@@ -42,8 +42,12 @@ if __name__ == "__main__":
     train_dataset, test_dataset, orig_shape, padding, holdout_data = buildDatasetFromTensor(keyframes, dim=64)
 
 
-    trainers = {"PRID":PRIDLiteTrainer}
-    arg_models = {"PRID":PRIDLiteArgs}
+    trainers = {"PRID":PRIDLiteTrainer,
+                "AE":AutoencoderTrainer,
+                "CBD": CBDNetTrainer}
+    arg_models = {"PRID":PRIDLiteArgs,
+                  "AE":AutoencoderArgs,
+                  "CBD":CBDNetArgs}
 
     arg = arg_models[model]
     trainer = trainers[model]
@@ -64,12 +68,54 @@ if __name__ == "__main__":
             wandb_project="thesis_dss_pridnet",
             wandb_name=f"sweep_run_prid"
         )
+    elif arg == AutoencoderArgs:
+        best_p = yaml_data[1]
+        lr = int(best_p['Lr'])
+        batch_size = int(best_p["BatchSize"])
+        hidden = int(best_p["Hidden"])
+        latent = int(best_p["Latent"])
+        model_args = AutoencoderArgs(
+                    trainset=train_dataset,
+                    testset=test_dataset,
+                    holdoutData=holdout_data,
+                    original_shape=orig_shape,
+                    padding=padding,
+                    latent_dim_size=latent,
+                    hidden_dim_size=hidden,
+                    lr=lr,
+                    batch_size=batch_size,
+                    use_wandb=False,
+                    wandb_project="thesis_dss_autoencoder",
+                    wandb_name=f"sweep_run_final"
+                    )
+    elif arg == CBDNetArgs:
+        best_p = yaml_data[2]
+        lr = int(best_p['Lr'])
+        batch_size = int(best_p['BatchSize'])
+        model_args = CBDNetArgs(
+                    trainset=train_dataset,
+                    testset=test_dataset,
+                    holdoutData=holdout_data,
+                    original_shape=orig_shape,
+                    padding=padding,
+                    lr=lr,
+                    ssim_weights=0.11,
+                    batch_size=batch_size,
+                    use_wandb=False,
+                    wandb_project="thesis-cbdnet",
+                    wandb_name=f"sweep_run_cbd"
+
+                )
+
 
 
     trainer_instance = trainer(args=model_args, device=device)
-    model, loss_f = trainer_instance.train()
+    if trainer == "AE" or "PRID":
+        model, loss_f = trainer_instance.train()
+    else:
+        model = trainer_instance.train()
 
-    torch.save(model.state_dict(), "/Users/thomasbush/Documents/Vault/DSS_Tilburg/data/models/best_prid_model.pth")
+    torch.save(model.state_dict(), f"/Users/thomasbush/Documents/Vault/DSS_Tilburg/data/models/{args_user.model}model.pth")
 
 
 
