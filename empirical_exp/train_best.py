@@ -84,6 +84,7 @@ if __name__ == "__main__":
                     hidden_dim_size=hidden,
                     lr=lr,
                     batch_size=batch_size,
+                    epochs=20,
                     use_wandb=False,
                     wandb_project="thesis_dss_autoencoder",
                     wandb_name=f"sweep_run_final"

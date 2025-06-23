@@ -198,7 +198,7 @@ class AutoencoderTrainer:
         pred1 = torch.clamp(pred, 0.0, 1.0)
         loss_ssim = self.loss_ssim(pred1, original)
         loss_mse = self.loss_mse(pred1, original)
-        loss = loss_mse + loss_ssim
+        loss = loss_mse #+ loss_ssim
         loss.backward()
         self.optimizer.step()
         self.optimizer.zero_grad()

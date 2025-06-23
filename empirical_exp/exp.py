@@ -2,7 +2,7 @@ import torch as t
 import os
 from pathlib import Path
 from utils.utils import loadVideoArray, generatePatches, reconstructFromPatches
-from denoising.models import PRIDLite
+from denoising.models import AutoEncoder, PRIDLite
 import argparse
 from tqdm import tqdm
 import cv2
@@ -87,8 +87,8 @@ if __name__ == "__main__":
 
 
     # === load model ===
-    model_path = '/Users/thomasbush/Documents/Vault/DSS_Tilburg/data/models/best_prid_model.pth'
-    model = PRIDLite()
+    model_path = '/Users/thomasbush/Documents/Vault/DSS_Tilburg/data/models/AEmodel.pth'
+    model = AutoEncoder(latent_dim_size=64, hidden_dim_size=128)
     model.load_state_dict(t.load(model_path, map_location="cpu"))
 
     #=== run model ===
