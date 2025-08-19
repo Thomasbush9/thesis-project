@@ -41,12 +41,12 @@ cd thesis-project
 conda create -n thesis python=3.10
 conda activate thesis
 pip install -r requirements.txt
-
+```
 ## Results
 
 - **Denoising**: CBDNet outperforms the two other networks
 - ** Keyframe selection**: K-means select more meaningful frames
-```
+
 
 ## Contact
 
